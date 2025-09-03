@@ -1,5 +1,7 @@
-Luau for Web
+Luau Web
 ====
+
+<img src="https://github.com/user-attachments/assets/03cafe78-9430-4eec-a618-85e828812e0f" width="130px" align="right"/>
 
 Luau (lowercase u, /ˈlu.aʊ/) is a fast, small, safe, gradually typed embeddable scripting language derived from [Lua](https://lua.org).
 
@@ -7,9 +9,7 @@ This fork is designed to enhance the interop you get while embedding Luau in a w
 
 # Usage
 
-Luau is an embeddable programming language, but now it comes with an extra argument for the WebAssembly API allowing you to provide a custom environment for the script that is executed, alongside interop allowing JS to call functions from Lua, and Lua to call functions from JS.
-
-
+Luau is an embeddable programming language, but this fork adds an extra argument for the WebAssembly API allowing you to provide a custom environment for the script that is executed, alongside interop allowing JS to call functions from Lua, and Lua to call functions from JS.
 
 ## Building Luau for Web
 
