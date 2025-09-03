@@ -1,4 +1,9 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "lua.h"
 #include "lualib.h"
 #include "luacode.h"
@@ -9,6 +14,100 @@
 #include <memory>
 
 #include <string.h>
+
+#ifdef __EMSCRIPTEN__
+#include <unordered_map>
+#include <sstream>
+#include <iomanip>
+
+static std::unordered_map<lua_State*, int> emEnvMap;
+
+extern "C" void setEnvId(lua_State* L, int envId)
+{
+    emEnvMap[L] = envId;
+}
+
+extern "C" int getEnvId(lua_State* L)
+{
+    auto it = emEnvMap.find(L);
+    if (it != emEnvMap.end())
+        return it->second;
+
+    lua_State* M = lua_mainthread(L);
+    it = emEnvMap.find(M);
+    return it != emEnvMap.end() ? it->second : -1;
+}
+
+EM_JS(void, setEnvFromJS, (int envId, int L_ptr), {
+    if (envId == 0)
+    {
+        return;
+    }
+
+    let env = Module.environments[envId];
+
+    for (let key in env)
+    {
+        let value = env[key];
+        let type = "string";
+
+        if (typeof value == "number")
+        {
+            type = "number";
+            value = value.toString();
+        }
+        else if (typeof value == "boolean")
+        {
+            type = "boolean";
+            value = value.toString();
+        }
+        else if (typeof value == "function")
+        {
+            type = "function";
+            value = key;
+        }
+        else if (value == undefined) {
+            type = "nil";
+            value = "nil";
+        }
+
+        Module.ccall('pushGlobalToLua', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, key, type, value ]);
+    }
+});
+
+extern "C" void pushGlobalToLua(lua_State* L, const char* key, const char* type, const char* value)
+{
+    if (!L || !key || !type || !value)
+    {
+        return;
+    }
+
+    if (strcmp(type, "number") == 0)
+    {
+        lua_Number n = atof(value);
+        lua_pushnumber(L, n);
+    }
+    else if (strcmp(type, "string") == 0)
+    {
+        lua_pushstring(L, value);
+    }
+    else if (strcmp(type, "boolean") == 0)
+    {
+        lua_pushboolean(L, strcmp(value, "true") == 0);
+    }
+    else if (strcmp(type, "nil") == 0) {
+        lua_pushnil(L);
+    }
+    else
+    {
+        fprintf(stderr, "\x1b[1;38;5;13m[luau-web] \x1b[38;5;11m[warn] \x1b[22mpushGlobalToLua: unsupported type '%s' for key '%s'\x1b[0m\n", type, key);
+        lua_pushnil(L);
+    }
+
+    lua_setglobal(L, key);
+}
+
+#endif
 
 static void setupState(lua_State* L)
 {
@@ -88,7 +187,7 @@ static std::string runCode(lua_State* L, const std::string& source)
     }
 }
 
-extern "C" const char* executeScript(const char* source)
+extern "C" const char* executeScript(const char* source, int envId)
 {
     // setup flags
     for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
@@ -104,6 +203,15 @@ extern "C" const char* executeScript(const char* source)
 
     // sandbox thread
     luaL_sandboxthread(L);
+
+// check for env (only for web/emscripten)
+#ifdef __EMSCRIPTEN__
+    if (envId != 0)
+    {
+        setEnvId(L, envId);
+        setEnvFromJS(envId, (int)L);
+    }
+#endif
 
     // static string for caching result (prevents dangling ptr on function exit)
     static std::string result;

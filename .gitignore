@@ -18,3 +18,9 @@
 __pycache__
 .cache
 .clangd
+*.a
+CMakeFiles
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+Luau.Web.js
