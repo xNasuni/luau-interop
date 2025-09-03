@@ -1,3 +1,6 @@
+>[!WARNING]
+> This fork is a modified copy of Luau with heavy changes in the code that is written by a single developer and you should ensure that the vulnerability is only present in the official [luau](https://github.com/luau-lang/luau) repository, if it only affects this fork then please disregard anything below this warning and contact me at [transgirls.win/contact](https://transgirls.win/contact), otherwise you should report vulnerabilities to Roblox themselves.
+
 # Security Guarantees
 
 Luau provides a safe sandbox that scripts can not escape from, short of vulnerabilities in custom C functions exposed by the host. This includes the virtual machine, builtin libraries and native code generation facilities.
