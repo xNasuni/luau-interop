@@ -430,7 +430,6 @@ EM_JS(void, ensureInterop, (), {
             value = "nil";
         }
 
-        Module.fprintwarn(`j2l conversion decided ${value},${typeof value} is ${type}, ${value}`);
         return [type, value];
     }
 });
