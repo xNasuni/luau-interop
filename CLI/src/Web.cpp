@@ -106,7 +106,7 @@ EM_JS(void, ensureInterop, (), {
     Module.jsValueReverse = Module.jsValueReverse || new Map();
 
     Module.transactionData = Module.transactionData || [];
-    Module.environments = Module.environments || {};
+    Module.environments = Module.environments || [];
 
     Module.nextJSRef = Module.nextJSRef || 1;
 
@@ -923,9 +923,9 @@ extern "C" lua_State* makeLuaState(int envId) {
     return L;
 }
 
-EM_JS(char*, acceptSource, (int sourceIdx), {
-    const source = Module.transactionData[sourceIdx];
-    delete Module.transactionData[sourceIdx];
+EM_JS(char*, acceptStringTransaction, (int transactionIdx), {
+    const source = Module.transactionData[transactionIdx] || "none";
+    delete Module.transactionData[transactionIdx];
 
     const length = lengthBytesUTF8(source) + 1;
     const ptr = _malloc(length);
@@ -934,24 +934,30 @@ EM_JS(char*, acceptSource, (int sourceIdx), {
     return ptr;
 });
 
-extern "C" int luauLoad(lua_State* L, int sourceIdx) {
+extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx) {
     size_t bytecodeSize = 0;
-    char* source = acceptSource(sourceIdx);
+
+    char* source = acceptStringTransaction(sourceIdx);
     if (!source || source == nullptr) {
         lua_pushstring(L, "failed to accept source from transaction");
+        return -1;
+    }
+
+    char* chunkName = acceptStringTransaction(chunkNameIdx);
+    if (!chunkName || chunkName == nullptr) {
+        lua_pushstring(L, "failed to accept chunkName from transaction");
         return -1;
     }
 
     char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
     free(source);
 
-    int result = luau_load(L, "=stdin", bytecode, bytecodeSize, 0);
-
+    int result = luau_load(L, chunkName, bytecode, bytecodeSize, 0);
     free(bytecode);
 
     return result;
 }
 
-extern "C" int luauClose(lua_State* L) {
+extern "C" void luauClose(lua_State* L) {
     lua_close(L);
 }
