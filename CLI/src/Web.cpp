@@ -910,7 +910,6 @@ extern "C" lua_State* makeLuaState(int envId) {
     // create new state
     lua_State* L = luaL_newstate();
 
-
     // setup state
     setupState(L);
 
@@ -943,20 +942,20 @@ EM_JS(char*, acceptStringTransaction, (int transactionIdx), {
 });
 
 extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx) {
-    size_t bytecodeSize = 0;
-
     char* source = acceptStringTransaction(sourceIdx);
+    char* chunkName = acceptStringTransaction(chunkNameIdx);
+    
     if (!source || source == nullptr) {
         lua_pushstring(L, "failed to accept source from transaction");
         return -1;
     }
 
-    char* chunkName = acceptStringTransaction(chunkNameIdx);
     if (!chunkName || chunkName == nullptr) {
         lua_pushstring(L, "failed to accept chunkName from transaction");
         return -1;
     }
 
+    size_t bytecodeSize = 0;
     char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
     free(source);
 
