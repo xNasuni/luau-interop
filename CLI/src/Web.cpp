@@ -227,7 +227,7 @@ EM_JS(void, ensureInterop, (), {
                         return true;
                     }
                     
-                    return Module.indexLuaTable() != null;
+                    return Module.indexLuaTable(obj, prop) != null;
                 },
                 ownKeys(target) {
                     return Reflect.ownKeys(obj);
@@ -376,7 +376,11 @@ EM_JS(void, ensureInterop, (), {
     Module.jsToLuauValue = function(value) {
         let type = "unknown";
 
-        if (typeof value == "number")
+        if (!value || typeof value == "undefined") {
+            type = "nil";
+            value = "nil";
+        }
+        else if (typeof value == "number")
         {
             type = "number";
             value = value.toString();
@@ -426,6 +430,7 @@ EM_JS(void, ensureInterop, (), {
             value = "nil";
         }
 
+        Module.fprintwarn(`j2l conversion decided ${value},${typeof value} is ${type}, ${value}`);
         return [type, value];
     }
 });
@@ -641,7 +646,7 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
             args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
 
             const returnData = returns instanceof Array ? returns : [returns];
-            trimmed = returnData.slice(0, returnData.findLastIndex(x => x != undefined) + 1);
+            trimmed = returnData;
         }
     }
 
@@ -669,7 +674,7 @@ EM_JS(int, pushRetData, (int L_ptr, int returnDataKey, int argc), {
 
     returnData.forEach((data) => {
         const [type, value] = Module.jsToLuauValue(data);
-        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, value.toString() ]);
+        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${value}` ]);
     });
 
     return returnData.length;
