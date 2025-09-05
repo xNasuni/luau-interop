@@ -699,6 +699,8 @@ int proxy_call(lua_State* L)
 
     int retc = retrieveRetc(returnDataKey);
 
+    lua_settop(L, argc);
+
     if (retc >= 1) {
         return pushRetData((int)L, returnDataKey, retc);
     } else {
@@ -812,22 +814,21 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
     std::string retJson = "[";
 
     if (status == LUA_OK) {
-        int base = top;
-        int nresults = lua_gettop(L) - top + 1;
+        int nresults = lua_gettop(L) - top;
 
-        for (int i = 1; i < nresults; i++) {
+        for (int i = 1; i <= nresults; i++) {
             int ref = LUA_NOREF;
-            retJson += serializeLuaValue(L, base + i, &ref);
-            if (i < nresults - 1) retJson += ",";
+            retJson += serializeLuaValue(L, top + i, &ref);
+            if (i < nresults) retJson += ",";
         }
     } else {
         int ref = LUA_NOREF;
         retJson += serializeLuaValue(L, -1, &ref);
-        lua_pop(L, 1);
     }
 
     retJson += "]";
 
+    lua_settop(L, top);
     setMultretData(retJson.c_str(), argIdx);
     
     return status;
@@ -867,6 +868,7 @@ extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV) 
     int ref = LUA_NOREF;
     std::string valueJson = serializeLuaValue(L, -1, &ref);
     
+    lua_pop(L, 2);
     return sendValueToJS(valueJson.c_str());
 }
 
@@ -881,6 +883,7 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
 
     lua_rawset(L, -3);
     
+    lua_pop(L, 1);
     return true;
 }
 

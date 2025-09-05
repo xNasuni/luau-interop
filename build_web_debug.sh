@@ -1,2 +1,3 @@
-emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Debug
+emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_EXE_LINKER_FLAGS="-sSTACK_SIZE=1048576"
 make -j2 Luau.Web
