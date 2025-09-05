@@ -333,7 +333,7 @@ EM_JS(void, ensureInterop, (), {
 
     Module.luauToJsValue = function(L_ptr, v)
     {
-        if (!v || !v.type || !v.value) {
+        if (typeof v == "undefined" || typeof v.type == "undefined" || typeof v.value == "undefined") {
             return null;
         }
 
@@ -559,6 +559,20 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         fprintwarn("illegal serialization: unsupported value type '%s' [%d]", luauTypeName(valueType), valueType);
         return "{\"type\":\"unknown\",\"value\":null}";
     }
+}
+
+EM_JS(int, pushTransactionString, (const char* str), {
+    const transactionKey = Module.transactionData.length;
+    Module.transactionData[transactionKey] = UTF8ToString(str);
+
+    return transactionKey;
+});
+
+extern "C" int getLuaValue(lua_State* L, int index) {
+    int ref = LUA_NOREF;
+    std::string value = serializeLuaValue(L, index, &ref);
+
+    return pushTransactionString(value.c_str());
 }
 
 int proxy_index(lua_State* L)
@@ -787,7 +801,9 @@ EM_JS(void, setMultretData, (const char* multretJson, int argIdx), {
 extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
     int top = lua_gettop(L);
 
-    lua_getref(L, ref);
+    if (ref != LUA_NOREF) {
+        lua_getref(L, ref);
+    }
 
     int nargs = pushArgs((int)L, argIdx);
 
@@ -811,7 +827,6 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
     }
 
     retJson += "]";
-
 
     setMultretData(retJson.c_str(), argIdx);
     
@@ -878,87 +893,15 @@ static void setupState(lua_State* L)
     luaL_sandbox(L);
 }
 
-static std::string runCode(lua_State* L, const std::string& source)
-{
-    size_t bytecodeSize = 0;
-    char* bytecode = luau_compile(source.data(), source.length(), nullptr, &bytecodeSize);
-    int result = luau_load(L, "=stdin", bytecode, bytecodeSize, 0);
-    free(bytecode);
-
-    if (result != 0)
-    {
-        size_t len;
-        const char* msg = lua_tolstring(L, -1, &len);
-
-        std::string error(msg, len);
-        lua_pop(L, 1);
-
-        return error;
-    }
-
-    lua_State* T = lua_newthread(L);
-
-    lua_pushvalue(L, -2);
-    lua_remove(L, -3);
-    lua_xmove(L, T, 1);
-
-    int status = lua_resume(T, NULL, 0);
-
-    if (status == 0)
-    {
-        int n = lua_gettop(T);
-
-        if (n)
-        {
-            luaL_checkstack(T, LUA_MINSTACK, "too many results to print");
-            lua_getglobal(T, "print");
-            lua_insert(T, 1);
-            lua_pcall(T, n, 0, 0);
-        }
-
-        lua_pop(L, 1); // pop T
-        return std::string();
-    }
-    else
-    {
-        std::string error;
-
-        lua_Debug ar;
-        if (lua_getinfo(L, 0, "sln", &ar))
-        {
-            error += ar.short_src;
-            error += ':';
-            error += std::to_string(ar.currentline);
-            error += ": ";
-        }
-
-        if (status == LUA_YIELD)
-        {
-            error += "thread yielded unexpectedly";
-        }
-        else if (const char* str = lua_tostring(T, -1))
-        {
-            error += str;
-        }
-
-        error += "\nstack backtrace:\n";
-        error += lua_debugtrace(T);
-
-        lua_pop(L, 1); // pop T
-        return error;
-    }
-}
-
-extern "C" const char* executeScript(const char* source, int envId)
-{
+extern "C" lua_State* makeLuaState(int envId) {
     // setup flags
     for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
         if (strncmp(flag->name, "Luau", 4) == 0)
             flag->value = true;
 
     // create new state
-    std::unique_ptr<lua_State, void (*)(lua_State*)> globalState(luaL_newstate(), lua_close);
-    lua_State* L = globalState.get();
+    lua_State* L = luaL_newstate();
+
 
     // setup state
     setupState(L);
@@ -968,19 +911,47 @@ extern "C" const char* executeScript(const char* source, int envId)
 
 // check for env (only for web/emscripten)
 #ifdef __EMSCRIPTEN__
+    ensureInterop();
+
     if (envId != 0)
     {
-        ensureInterop();
         setEnvId(L, envId);
         setEnvFromJS(envId, (int)L);
     }
 #endif
 
-    // static string for caching result (prevents dangling ptr on function exit)
-    static std::string result;
+    return L;
+}
 
-    // run code + collect error
-    result = runCode(L, source);
+EM_JS(char*, acceptSource, (int sourceIdx), {
+    const source = Module.transactionData[sourceIdx];
+    delete Module.transactionData[sourceIdx];
 
-    return result.empty() ? NULL : result.c_str();
+    const length = lengthBytesUTF8(source) + 1;
+    const ptr = _malloc(length);
+    stringToUTF8(source, ptr, length);
+
+    return ptr;
+});
+
+extern "C" int luauLoad(lua_State* L, int sourceIdx) {
+    size_t bytecodeSize = 0;
+    char* source = acceptSource(sourceIdx);
+    if (!source || source == nullptr) {
+        lua_pushstring(L, "failed to accept source from transaction");
+        return -1;
+    }
+
+    char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
+    free(source);
+
+    int result = luau_load(L, "=stdin", bytecode, bytecodeSize, 0);
+
+    free(bytecode);
+
+    return result;
+}
+
+extern "C" int luauClose(lua_State* L) {
+    lua_close(L);
 }
