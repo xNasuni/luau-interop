@@ -5,11 +5,11 @@ Luau Web
 
 Luau (lowercase u, /ˈlu.aʊ/) is a fast, small, safe, gradually typed embeddable scripting language derived from [Lua](https://lua.org).
 
-This fork is designed to enhance the interop you get while embedding Luau in a website, Node.JS, or Typescript. For examples, you can check out [the wiki](https://github.com/xNasuni/luau-web/wiki).
+This fork is designed to overhaul the interop you get while embedding Luau in a website, Node.JS, or Typescript. For examples, you can check out [the wiki](https://github.com/xNasuni/luau-web/wiki).
 
 # Usage
 
-Luau is an embeddable programming language, but this fork adds an extra argument for the WebAssembly API allowing you to provide a custom environment for the script that is executed, alongside interop allowing JS to call functions from Lua, and Lua to call functions from JS.
+Luau is an embeddable programming language, but this fork rewrites the old execution API allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.
 
 ## Building Luau for Web
 
