@@ -348,7 +348,7 @@ EM_JS(void, ensureInterop, (), {
             return (typeof v.value == "boolean" ? v.value == true : v.value == "true");
         case "nil":
         case "undefined":
-            return nil;
+            return null;
         //--> reference types
         case "table":
         case "function":
@@ -363,6 +363,14 @@ EM_JS(void, ensureInterop, (), {
             Module.fprintwarn(`illegal l2j conversion: unsupported type '${v.type}', defaulted to null: ${v.value}`);
             return null;
         }
+    };
+
+    Module.safeIn = function(inValue, value) {
+        try {
+            return inValue in value;
+        } catch (e) {
+        }
+        return false;
     };
 
     Module.jsToLuauValue = function(value) {
@@ -382,14 +390,14 @@ EM_JS(void, ensureInterop, (), {
             type = "boolean";
             value = value.toString();
         }
-        else if (typeof value == "function" && !(Module.LUA_VALUE in value) && !(Module.JS_VALUE in value))
+        else if (typeof value == "function" && !(Module.safeIn(Module.LUA_VALUE, value)) && !(Module.safeIn(Module.JS_VALUE, value)))
         {
             type = "function";
             value = Module.getPersistentRef(value).toString();
         }
-        else if (typeof value == "object" || (Module.LUA_VALUE in value || Module.JS_VALUE in value))
+        else if (typeof value == "object" || (Module.safeIn(Module.LUA_VALUE, value) || Module.safeIn(Module.JS_VALUE, value)))
         {
-            if (Module.LUA_VALUE in value) {
+            if (Module.safeIn(Module.LUA_VALUE, value)) {
                 const data = value[Module.LUA_VALUE];
                 if (!data.released) {
                     type = data.type;
@@ -399,7 +407,7 @@ EM_JS(void, ensureInterop, (), {
                     type = "nil";
                     value = "nil";
                 }
-            } else if (Module.JS_VALUE in value) {
+            } else if (Module.safeIn(Module.JS_VALUE, value)) {
                 const data = value[Module.JS_VALUE];
                 type = "object";
                 value = data.ref.toString();
@@ -429,9 +437,14 @@ EM_JS(void, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const ch
 
     if (data) {
         const keyData = Module.luauToJsValue(L_ptr, key);
-        const [type, value] = Module.jsToLuauValue(data.value[keyData]);
+        if (!data[Module.JS_VALUE]) {
+            Module.fprintwarn("illegal state: js callback on non js data");  
+            return;
+        };
 
-        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, keyData.toString() ]);
+        const [type, value] = Module.jsToLuauValue(data[Module.JS_VALUE].value[keyData]);
+
+        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${keyData}` ]);
     }
 });
 
@@ -608,14 +621,6 @@ int proxy_index(lua_State* L)
     }
 }
 
-int proxy_newindex(lua_State* L)
-{
-    lua_pushstring(L, "never");
-    lua_error(L);
-    
-    return 0;
-}
-
 EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* argsJson), {
     const pathStr = UTF8ToString(path);
     const argsStr = UTF8ToString(argsJson);
@@ -742,10 +747,6 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         lua_pushstring(L, value);
         lua_pushcclosurek(L, proxy_index, NULL, 1, NULL);
         lua_setfield(L, -2, "__index");
-
-        lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_newindex, NULL, 1, NULL);
-        lua_setfield(L, -2, "__newindex");
 
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
