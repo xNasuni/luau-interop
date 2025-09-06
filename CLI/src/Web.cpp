@@ -7,6 +7,9 @@
 #include "lua.h"
 #include "lualib.h"
 #include "luacode.h"
+#include "lstate.h"
+#include "lobject.h"
+#include "ludata.h"
 
 #include "Luau/Common.h"
 
@@ -19,6 +22,9 @@
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
+
+#define UTAG_JSFUNC (LUA_UTAG_LIMIT - 1)
+#define UTAG_JSOBJECT (LUA_UTAG_LIMIT - 2)
 
 void fprint(const char* fmt, ...)
 {
@@ -91,7 +97,7 @@ EM_JS(void, setEnvFromJS, (int envId, int L_ptr), {
 
     for (let key in env)
     {
-        let [type, value] = Module.jsToLuauValue(env[key]);
+        let [type, value] = Module.jsToLuauValue(null, env[key]);
 
         Module.ccall('pushGlobalToLua', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, key, type, value ]);
     }
@@ -108,7 +114,7 @@ EM_JS(void, ensureInterop, (), {
     Module.transactionData = Module.transactionData || [];
     Module.environments = Module.environments || [];
 
-    Module.nextJSRef = Module.nextJSRef || 1;
+    Module.nextJSRef = Module.nextJSRef || -1;
 
     class LuaError extends Error {
         constructor(message) {
@@ -253,6 +259,7 @@ EM_JS(void, ensureInterop, (), {
 
         const trimmed = args.slice(0, args.findLastIndex(x => x != undefined) + 1);
         const argDataKey = Module.transactionData.length;
+
         Module.transactionData[argDataKey] = trimmed;
 
         const status = Module.ccall("luaPcall", 'void', [ 'number', 'number', 'number' ], [ luaFunctionData.state, luaFunctionData.ref, argDataKey ]);
@@ -261,11 +268,11 @@ EM_JS(void, ensureInterop, (), {
         delete Module.transactionData[argDataKey];
 
         const argData = multretData.map(v => Module.luauToJsValue(luaFunctionData.state, v));
-        
+
         if (status != 0) {
             throw new LuaError(argData[0] ? argData[0] : "No output from Luau");
         }
-        
+
         return argData;
     };
 
@@ -277,7 +284,7 @@ EM_JS(void, ensureInterop, (), {
             return;
         }
 
-        const [type, value] = Module.jsToLuauValue(key);
+        const [type, value] = Module.jsToLuauValue(null, key);
 
         const transactionIdx = Module.ccall("luaIndex", "number", [ "number", "number", "string", "string" ], [ luaTableData.state, luaTableData.ref, type, value ]);
 
@@ -297,24 +304,26 @@ EM_JS(void, ensureInterop, (), {
             return;
         }
 
-        const [KT, KV] = Module.jsToLuauValue(key);
-        const [VT, VV] = Module.jsToLuauValue(value);
+        const [KT, KV] = Module.jsToLuauValue(null, key);
+        const [VT, VV] = Module.jsToLuauValue(null, value);
 
         const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV ]);
 
         return modified == 1;
     };
 
-    Module.getPersistentRef = function(jsValue) {
+    Module.getPersistentRef = function(jsValue, parent, key) {
         if (Module.jsValueReverse.has(jsValue)) {
             return Module.jsValueReverse.get(jsValue);
         }
 
-        const ref = Module.nextJSRef++;
+        const ref = Module.nextJSRef--;
         const obj = {
             [Module.JS_VALUE]: {
                 ref,
                 value: jsValue,
+                parent,
+                key,
                 released: false,
                 release() {
                     if (this.released) return;
@@ -350,6 +359,16 @@ EM_JS(void, ensureInterop, (), {
         case "undefined":
             return null;
         //--> reference types
+        case "jobject":
+        case "jfunction":
+            if (typeof v.value == "number" && Module.jsValueCache.has(v.value)) {
+                const jsValue = Module.jsValueCache.get(v.value);
+                if (jsValue && Module.safeIn(Module.JS_VALUE, jsValue)) {
+                    return jsValue[Module.JS_VALUE].value;
+                };
+            };
+            Module.fprintwarn(`illegal state: cannot transmit ${v.type} invalid ${v.value}`);
+            return null;
         case "table":
         case "function":
         case "userdata":
@@ -373,8 +392,9 @@ EM_JS(void, ensureInterop, (), {
         return false;
     };
 
-    Module.jsToLuauValue = function(value) {
+    Module.jsToLuauValue = function(parent, key) {
         let type = "unknown";
+        let value = parent != null ? parent?.[key] ?? null : key;
 
         if (!value || typeof value == "undefined") {
             type = "nil";
@@ -396,8 +416,8 @@ EM_JS(void, ensureInterop, (), {
         }
         else if (typeof value == "function" && !(Module.safeIn(Module.LUA_VALUE, value)) && !(Module.safeIn(Module.JS_VALUE, value)))
         {
-            type = "function";
-            value = Module.getPersistentRef(value).toString();
+            type = "jfunction";
+            value = Module.getPersistentRef(value, parent, key).toString();
         }
         else if (typeof value == "object" || (Module.safeIn(Module.LUA_VALUE, value) || Module.safeIn(Module.JS_VALUE, value)))
         {
@@ -413,11 +433,11 @@ EM_JS(void, ensureInterop, (), {
                 }
             } else if (Module.safeIn(Module.JS_VALUE, value)) {
                 const data = value[Module.JS_VALUE];
-                type = "object";
+                type = "jobject";
                 value = data.ref.toString();
             } else {
-                type = "object";
-                value = Module.getPersistentRef(value).toString();
+                type = "jobject";
+                value = Module.getPersistentRef(value, parent, key).toString();
             }
         }
         else if (value == undefined)
@@ -434,9 +454,10 @@ EM_JS(void, ensureInterop, (), {
     }
 });
 
-EM_JS(void, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const char* keyCStr), {
+EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const char* keyCStr), {
     const path = JSON.parse(UTF8ToString(pathCStr));
     const key = JSON.parse(UTF8ToString(keyCStr));
+
     const data = Module.jsValueCache.get(path);
 
     if (data) {
@@ -446,10 +467,13 @@ EM_JS(void, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const ch
             return;
         };
 
-        const [type, value] = Module.jsToLuauValue(data[Module.JS_VALUE].value[keyData]);
+        const [type, value] = Module.jsToLuauValue(data[Module.JS_VALUE].value, keyData);
 
         Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${keyData}` ]);
+        return 1;
     }
+
+    return 0;
 });
 
 bool isReferenceType(int kind)
@@ -555,14 +579,39 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         return std::string("{\"type\":\"boolean\",\"value\":") + (lua_toboolean(L, index) ? "true}" : "false}");
     case LUA_TNIL:
         return "{\"type\":\"nil\",\"value\":null}";
+    case LUA_TUSERDATA:
+    {
+        if (lua_getmetatable(L, index)) {
+            int tag = lua_userdatatag(L, index);
+            if (tag != UTAG_PROXY && (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT)) {
+                const char* detectedType = "nil";
+                if (tag == UTAG_JSFUNC) {
+                    detectedType = "jfunction";
+                }
+                if (tag == UTAG_JSOBJECT) {
+                    detectedType = "jobject";
+                }
+
+                lua_getfield(L, -1, "__index");
+                const char* name = lua_getupvalue(L, -1, 1);
+                if (name && lua_isstring(L, -1)) {
+                    std::string result = std::string("{\"type\":\"") + detectedType + std::string("\",\"value\":") + lua_tostring(L, -1) + std::string("}");
+                    lua_pop(L, 2);
+                    return result;
+                }
+                lua_pop(L, 2);
+                break;
+            }
+            lua_pop(L, 1);
+        }
+        [[fallthrough]];
+    }
     case LUA_TTABLE:
     case LUA_TFUNCTION:
-    case LUA_TUSERDATA:
     case LUA_TTHREAD:
     case LUA_TBUFFER:
     {
         const char* typeName = luauTypeName(valueType);
-        lua_pushvalue(L, index);
 
         int ref = getPersistentRef(L, index);
         *refOut = ref;
@@ -570,12 +619,14 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         char buf[64];
         snprintf(buf, sizeof(buf), "%d", ref);
 
+
         return std::string("{\"type\":\"") + typeName + "\",\"value\":\"" + buf + "\"}";
     }
     default:
         fprintwarn("illegal serialization: unsupported value type '%s' [%d]", luauTypeName(valueType), valueType);
         return "{\"type\":\"unknown\",\"value\":null}";
     }
+    return "{\"type\":\"unknown\",\"value\":null}";
 }
 
 EM_JS(int, pushTransactionString, (const char* str), {
@@ -602,21 +653,19 @@ int proxy_index(lua_State* L)
     {
         int ref = LUA_REFNIL;
         std::string keyJson = serializeLuaValue(L, 2, &ref);
+        lua_unref(L, ref);
 
         int envId = getEnvId(L);
 
         if (envId != -1)
         {
-            getJSProperty((int)L, envId, path, keyJson.c_str());
+            return getJSProperty((int)L, envId, path, keyJson.c_str());
         }
         else
         {
             fprinterr("illegal state: no environment id found for lua state");
-            lua_pushnil(L);
+            return 0;
         }
-
-        lua_unref(L, ref);
-        return 1;
     }
     else
     {
@@ -630,7 +679,9 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
     const argsStr = UTF8ToString(argsJson);
 
     const rawArgs = JSON.parse(argsStr);
-    const args = rawArgs.map(arg=>Module.luauToJsValue(L_ptr, arg));
+    const actualArgs = rawArgs.slice(1);
+
+    const args = actualArgs.map(arg=>Module.luauToJsValue(L_ptr, arg));
 
     const key = JSON.parse(pathStr);
     var trmimed = [];
@@ -640,9 +691,12 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
 
         if (data && data.value) {
             const func = data.value;
-            const returns = func(...args);
+            const ctx = data.parent ?? null;
 
-            args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
+            const returns = func.apply(ctx, args);
+
+            // possibly re-enable in the future for long term applications
+            // args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
 
             const returnData = returns instanceof Array ? returns : [returns];
             trimmed = returnData;
@@ -672,7 +726,7 @@ EM_JS(int, pushRetData, (int L_ptr, int returnDataKey, int argc), {
     delete Module.transactionData[returnDataKey];
 
     returnData.forEach((data) => {
-        const [type, value] = Module.jsToLuauValue(data);
+        const [type, value] = Module.jsToLuauValue(null, data);
         Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${value}` ]);
     });
 
@@ -742,29 +796,49 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         int ref = atoi(value);
         lua_getref(L, ref);
     }
-    else if (strcmp(type, "object") == 0)
+    else if (strcmp(type, "jobject") == 0)
     {
-        lua_newtable(L);
+        lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSOBJECT);
 
         lua_newtable(L);
 
         lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_index, NULL, 1, NULL);
+        lua_pushcclosurek(L, proxy_index, lua_tostring(L, -1), 1, NULL);
         lua_setfield(L, -2, "__index");
 
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
+
+        lua_pushstring(L, "table");
+        lua_setfield(L, -2, "__type");
         
         lua_setreadonly(L, -1, true);
 
         lua_setmetatable(L, -2);
-
-        lua_setreadonly(L, -1, true);
     }
-    else if (strcmp(type, "function") == 0)
+    else if (strcmp(type, "jfunction") == 0)
     {
+        lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSFUNC);
+
+        lua_newtable(L);
+
+        lua_pushstring(L, value);
+        lua_pushcclosurek(L, proxy_index, lua_tostring(L, -1), 1, NULL);
+        lua_setfield(L, -2, "__index");
+
         lua_pushstring(L, value);
         lua_pushcclosurek(L, proxy_call, lua_tostring(L, -1), 1, NULL);
+        lua_setfield(L, -2, "__call");
+
+        lua_pushstring(L, "The metatable is locked");
+        lua_setfield(L, -2, "__metatable");
+
+        lua_pushstring(L, "function");
+        lua_setfield(L, -2, "__type");
+        
+        lua_setreadonly(L, -1, true);
+
+        lua_setmetatable(L, -2);
     }
     else
     {
@@ -791,17 +865,19 @@ extern "C" void pushValueToLuaWrapper(lua_State* L, const char* type, const char
 
 EM_JS(int, pushArgs, (int L_int, int argIdx), {
     const argData = Module.transactionData[argIdx];
+    const length = argData.length;
+    delete Module.transactionData[argIdx];
+
     argData.forEach((data) => {
-        const [type, value] = Module.jsToLuauValue(data);
+        const [type, value] = Module.jsToLuauValue(null, data);
         Module.ccall("pushValueToLuaWrapper", 'void', [ 'number', 'string', 'string', 'string' ], [ L_int, type, value, '<callarg>' ]);
     });
-
-    return argData.length;
+    
+    return length;
 });
 
-EM_JS(void, setMultretData, (const char* multretJson, int argIdx), {
+EM_JS(void, setMultretData, (int L_int, const char* multretJson, int argIdx), {
     const multretData = JSON.parse(UTF8ToString(multretJson));
-
     Module.transactionData[argIdx] = multretData;
 })
 
@@ -819,12 +895,16 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
     std::string retJson = "[";
 
     if (status == LUA_OK) {
-        int nresults = lua_gettop(L) - top;
-
+        int newTop = lua_gettop(L);
+        int nresults = newTop - top;
+       
         for (int i = 1; i <= nresults; i++) {
             int ref = LUA_NOREF;
             retJson += serializeLuaValue(L, top + i, &ref);
-            if (i < nresults) retJson += ",";
+
+            if (i < nresults) {
+                retJson += ",";
+            }
         }
     } else {
         int ref = LUA_NOREF;
@@ -834,7 +914,7 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
     retJson += "]";
 
     lua_settop(L, top);
-    setMultretData(retJson.c_str(), argIdx);
+    setMultretData((int)L, retJson.c_str(), argIdx);
     
     return status;
 }
@@ -850,6 +930,14 @@ extern "C" void luaUnref(lua_State* L, int ref)
 {
     if (!L || ref <= 0) {
         return;
+    }
+
+    lua_getref(L, ref);
+    const void* ptr = lua_topointer(L, -1);
+    lua_pop(L, 1);
+
+    if (ptr) {
+        refCache.erase(ptr);
     }
 
     lua_unref(L, ref);
@@ -879,7 +967,7 @@ extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV) 
 
 extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV) {
     lua_getref(L, lref);
-    if (lua_getreadonly(L, -3) == 1) {
+    if (lua_getreadonly(L, -1) == 1) {
         return false;
     }
 
@@ -899,6 +987,16 @@ static void setupState(lua_State* L)
     luaL_openlibs(L);
 
     luaL_sandbox(L);
+
+    lua_newtable(L);
+    lua_setreadonly(L, -1, true);
+    L->global->udatamt[UTAG_JSFUNC] = hvalue(L->top - 1);
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    lua_setreadonly(L, -1, true);
+    L->global->udatamt[UTAG_JSOBJECT] = hvalue(L->top - 1);
+    lua_pop(L, 1);    
 }
 
 extern "C" lua_State* makeLuaState(int envId) {

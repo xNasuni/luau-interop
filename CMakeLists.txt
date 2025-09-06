@@ -273,8 +273,13 @@ if(LUAU_BUILD_WEB)
     target_compile_options(Luau.Web PRIVATE ${LUAU_OPTIONS})
     target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM)
 
+    # add internal Luau headers
+    target_include_directories(Luau.Web PRIVATE
+        ${CMAKE_SOURCE_DIR}/VM/src
+    )
+
     # declare exported functions to emscripten
-    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'])
+    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576)
 
     # add -fexceptions for emscripten to allow exceptions to be caught in C++
     target_link_options(Luau.Web PRIVATE -fexceptions)
