@@ -9,7 +9,7 @@ This fork is designed to overhaul the interop you get while embedding Luau in a 
 
 # Usage
 
-Luau is an embeddable programming language, but this fork rewrites the old execution API allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.
+Luau is an embeddable programming language, this fork rewrites the WASM execution API and actually implements interop allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.
 
 ## Building Luau for Web
 
