@@ -87,6 +87,7 @@ int getEnvId(lua_State* L)
     return it != emEnvMap.end() ? it->second : -1;
 }
 
+// clang-format off
 EM_JS(void, setEnvFromJS, (int envId, int L_ptr), {
     if (envId == 0)
     {
@@ -475,6 +476,7 @@ EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const cha
 
     return 0;
 });
+// clang-format on
 
 bool isReferenceType(int kind)
 {
@@ -581,21 +583,27 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         return "{\"type\":\"nil\",\"value\":null}";
     case LUA_TUSERDATA:
     {
-        if (lua_getmetatable(L, index)) {
+        if (lua_getmetatable(L, index))
+        {
             int tag = lua_userdatatag(L, index);
-            if (tag != UTAG_PROXY && (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT)) {
+            if (tag != UTAG_PROXY && (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT))
+            {
                 const char* detectedType = "nil";
-                if (tag == UTAG_JSFUNC) {
+                if (tag == UTAG_JSFUNC)
+                {
                     detectedType = "jfunction";
                 }
-                if (tag == UTAG_JSOBJECT) {
+                if (tag == UTAG_JSOBJECT)
+                {
                     detectedType = "jobject";
                 }
 
                 lua_getfield(L, -1, "__index");
                 const char* name = lua_getupvalue(L, -1, 1);
-                if (name && lua_isstring(L, -1)) {
-                    std::string result = std::string("{\"type\":\"") + detectedType + std::string("\",\"value\":") + lua_tostring(L, -1) + std::string("}");
+                if (name && lua_isstring(L, -1))
+                {
+                    std::string result =
+                        std::string("{\"type\":\"") + detectedType + std::string("\",\"value\":") + lua_tostring(L, -1) + std::string("}");
                     lua_pop(L, 2);
                     return result;
                 }
@@ -629,14 +637,17 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
     return "{\"type\":\"unknown\",\"value\":null}";
 }
 
+// clang-format off
 EM_JS(int, pushTransactionString, (const char* str), {
     const transactionKey = Module.transactionData.length;
     Module.transactionData[transactionKey] = UTF8ToString(str);
 
     return transactionKey;
 });
+// clang-format on
 
-extern "C" int getLuaValue(lua_State* L, int index) {
+extern "C" int getLuaValue(lua_State* L, int index)
+{
     int ref = LUA_NOREF;
     std::string value = serializeLuaValue(L, index, &ref);
 
@@ -646,7 +657,7 @@ extern "C" int getLuaValue(lua_State* L, int index) {
 int proxy_index(lua_State* L)
 {
     const char* path = lua_tostring(L, lua_upvalueindex(1));
- 
+
     int keyType = lua_type(L, 2);
 
     if (isValueType(keyType) || isReferenceType(keyType))
@@ -674,6 +685,7 @@ int proxy_index(lua_State* L)
     }
 }
 
+// clang-format off
 EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* argsJson), {
     const pathStr = UTF8ToString(path);
     const argsStr = UTF8ToString(argsJson);
@@ -732,6 +744,7 @@ EM_JS(int, pushRetData, (int L_ptr, int returnDataKey, int argc), {
 
     return returnData.length;
 });
+// clang-format on
 
 int proxy_call(lua_State* L)
 {
@@ -764,9 +777,12 @@ int proxy_call(lua_State* L)
 
     lua_settop(L, argc);
 
-    if (retc >= 1) {
+    if (retc >= 1)
+    {
         return pushRetData((int)L, returnDataKey, retc);
-    } else {
+    }
+    else
+    {
         return 0;
     }
 }
@@ -811,7 +827,7 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
 
         lua_pushstring(L, "table");
         lua_setfield(L, -2, "__type");
-        
+
         lua_setreadonly(L, -1, true);
 
         lua_setmetatable(L, -2);
@@ -835,14 +851,19 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
 
         lua_pushstring(L, "function");
         lua_setfield(L, -2, "__type");
-        
+
         lua_setreadonly(L, -1, true);
 
         lua_setmetatable(L, -2);
     }
     else
     {
-        fprintwarn("illegal push: unsupported type '%s' for key '%s' with value '%s'", type ? type : "unknown", key ? key : "unknown", value ? value : "unknown");
+        fprintwarn(
+            "illegal push: unsupported type '%s' for key '%s' with value '%s'",
+            type ? type : "unknown",
+            key ? key : "unknown",
+            value ? value : "unknown"
+        );
         lua_pushnil(L);
     }
 }
@@ -863,6 +884,7 @@ extern "C" void pushValueToLuaWrapper(lua_State* L, const char* type, const char
     pushValueToLua(L, type, value, key);
 }
 
+// clang-format off
 EM_JS(int, pushArgs, (int L_int, int argIdx), {
     const argData = Module.transactionData[argIdx];
     const length = argData.length;
@@ -880,11 +902,14 @@ EM_JS(void, setMultretData, (int L_int, const char* multretJson, int argIdx), {
     const multretData = JSON.parse(UTF8ToString(multretJson));
     Module.transactionData[argIdx] = multretData;
 })
+// clang-format on
 
-extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
+extern "C" int luaPcall(lua_State* L, int ref, int argIdx)
+{
     int top = lua_gettop(L);
 
-    if (ref != LUA_NOREF) {
+    if (ref != LUA_NOREF)
+    {
         lua_getref(L, ref);
     }
 
@@ -894,19 +919,24 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
 
     std::string retJson = "[";
 
-    if (status == LUA_OK) {
+    if (status == LUA_OK)
+    {
         int newTop = lua_gettop(L);
         int nresults = newTop - top;
-       
-        for (int i = 1; i <= nresults; i++) {
+
+        for (int i = 1; i <= nresults; i++)
+        {
             int ref = LUA_NOREF;
             retJson += serializeLuaValue(L, top + i, &ref);
 
-            if (i < nresults) {
+            if (i < nresults)
+            {
                 retJson += ",";
             }
         }
-    } else {
+    }
+    else
+    {
         int ref = LUA_NOREF;
         retJson += serializeLuaValue(L, -1, &ref);
     }
@@ -915,7 +945,7 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx) {
 
     lua_settop(L, top);
     setMultretData((int)L, retJson.c_str(), argIdx);
-    
+
     return status;
 }
 
@@ -928,7 +958,8 @@ extern "C" int luaCloneref(lua_State* L, int ref)
 
 extern "C" void luaUnref(lua_State* L, int ref)
 {
-    if (!L || ref <= 0) {
+    if (!L || ref <= 0)
+    {
         return;
     }
 
@@ -936,13 +967,15 @@ extern "C" void luaUnref(lua_State* L, int ref)
     const void* ptr = lua_topointer(L, -1);
     lua_pop(L, 1);
 
-    if (ptr) {
+    if (ptr)
+    {
         refCache.erase(ptr);
     }
 
     lua_unref(L, ref);
 }
 
+// clang-format off
 EM_JS(int, sendValueToJS, (const char* valueJson), {
     const value = JSON.parse(UTF8ToString(valueJson));
     const key = Module.transactionData.length;
@@ -951,23 +984,27 @@ EM_JS(int, sendValueToJS, (const char* valueJson), {
 
     return key;
 });
+// clang-format on
 
-extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV) {
+extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV)
+{
     lua_getref(L, lref);
     pushValueToLua(L, KT, KV, "<indexarg>");
-    
+
     lua_rawget(L, -2);
 
     int ref = LUA_NOREF;
     std::string valueJson = serializeLuaValue(L, -1, &ref);
-    
+
     lua_pop(L, 2);
     return sendValueToJS(valueJson.c_str());
 }
 
-extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV) {
+extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV)
+{
     lua_getref(L, lref);
-    if (lua_getreadonly(L, -1) == 1) {
+    if (lua_getreadonly(L, -1) == 1)
+    {
         return false;
     }
 
@@ -975,7 +1012,7 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
     pushValueToLua(L, VT, VV, "<valuearg>");
 
     lua_rawset(L, -3);
-    
+
     lua_pop(L, 1);
     return true;
 }
@@ -996,10 +1033,11 @@ static void setupState(lua_State* L)
     lua_newtable(L);
     lua_setreadonly(L, -1, true);
     L->global->udatamt[UTAG_JSOBJECT] = hvalue(L->top - 1);
-    lua_pop(L, 1);    
+    lua_pop(L, 1);
 }
 
-extern "C" lua_State* makeLuaState(int envId) {
+extern "C" lua_State* makeLuaState(int envId)
+{
     // setup flags
     for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
         if (strncmp(flag->name, "Luau", 4) == 0)
@@ -1028,6 +1066,7 @@ extern "C" lua_State* makeLuaState(int envId) {
     return L;
 }
 
+// clang-format off
 EM_JS(char*, acceptStringTransaction, (int transactionIdx), {
     const source = Module.transactionData[transactionIdx] || "none";
     delete Module.transactionData[transactionIdx];
@@ -1038,17 +1077,21 @@ EM_JS(char*, acceptStringTransaction, (int transactionIdx), {
 
     return ptr;
 });
+// clang-format on
 
-extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx) {
+extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx)
+{
     char* source = acceptStringTransaction(sourceIdx);
     char* chunkName = acceptStringTransaction(chunkNameIdx);
-    
-    if (!source || source == nullptr) {
+
+    if (!source || source == nullptr)
+    {
         lua_pushstring(L, "failed to accept source from transaction");
         return -1;
     }
 
-    if (!chunkName || chunkName == nullptr) {
+    if (!chunkName || chunkName == nullptr)
+    {
         lua_pushstring(L, "failed to accept chunkName from transaction");
         return -1;
     }
@@ -1063,6 +1106,7 @@ extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx) {
     return result;
 }
 
-extern "C" void luauClose(lua_State* L) {
+extern "C" void luauClose(lua_State* L)
+{
     lua_close(L);
 }
