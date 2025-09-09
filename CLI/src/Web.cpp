@@ -906,6 +906,7 @@ extern "C" void pushGlobalToLua(lua_State* L, const char* key, const char* type,
 {
     if (!L || !key || !type || !value)
     {
+        fprintwarn("illegal push: some arguments are null: L=%p, key=%p, type=%p, value=%p", (void*)L, (void*)key, (void*)type, (void*)value);
         return;
     }
 
