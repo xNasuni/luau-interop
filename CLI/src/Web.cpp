@@ -707,7 +707,12 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
     const args = actualArgs.map(arg=>Module.luauToJsValue(L_ptr, arg));
 
     const key = JSON.parse(pathStr);
-    var trmimed = [];
+    var trimmed = [];
+
+    function luaError(s) {
+        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, 'string', s, `<jserror>` ]);
+        return -1;
+    }
 
     if (Module.jsValueCache.has(key)) {
         const data = Module.jsValueCache.get(key)[Module.JS_VALUE];
@@ -724,9 +729,7 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
                     throw e;
                 } else {
                     const errorStr = (e && e.toString) ? e.toString() : String(e);
-
-                    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, 'string', errorStr, `<jserror>` ]);
-                    return -1;
+                    return luaError(errorStr);
                 }
             }
 
@@ -735,7 +738,13 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
 
             const returnData = returns instanceof Array ? returns : [returns];
             trimmed = returnData;
+        } else {
+            Module.fprintwarn("illegal state: no js val found for path", pathStr);
+            return luaError('not tied to valid jval');
         }
+    } else {
+        Module.fprintwarn("illegal state: no js function found for path", pathStr);
+        return luaError('not tied to valid ref');
     }
 
     const returnDataKey = Module.transactionData.length;
