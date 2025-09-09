@@ -117,6 +117,13 @@ EM_JS(void, ensureInterop, (), {
 
     Module.nextJSRef = Module.nextJSRef || -1;
 
+    class FatalJSError extends Error {
+        constructor(message) {
+            super(message);
+            this.name = "FatalJSError";
+        }
+    };
+
     class LuaError extends Error {
         constructor(message) {
             super(message);
@@ -138,6 +145,10 @@ EM_JS(void, ensureInterop, (), {
                 .join("\n");
         }
     };
+
+    Module.FatalJSError = FatalJSError;
+    Module.LuaError = LuaError;
+    Module.GlueError = GlueError;
 
     Module.fprint = function(...args) {
         console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;15m[info]\x1b[22m", ...args, "\x1b[0m");
@@ -704,8 +715,20 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
         if (data && data.value) {
             const func = data.value;
             const ctx = data.parent ?? null;
+            var returns = null;
 
-            const returns = func.apply(ctx, args);
+            try {
+                returns = func.apply(ctx, args);
+            } catch (e) {
+                if (e instanceof Module.FatalJSError) {
+                    throw e;
+                } else {
+                    const errorStr = (e && e.toString) ? e.toString() : String(e);
+
+                    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, 'string', errorStr, `<jserror>` ]);
+                    return -1;
+                }
+            }
 
             // possibly re-enable in the future for long term applications
             // args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
@@ -772,6 +795,17 @@ int proxy_call(lua_State* L)
     argsJson += "]";
 
     int returnDataKey = callJSFunction((int)L, envId, path, argsJson.c_str());
+
+    if (returnDataKey == -1)
+    {
+        if (!lua_isstring(L, -1))
+        {
+            lua_pushstring(L, "No output from JS");
+        }
+
+        lua_error(L);
+        return 0;
+    }
 
     int retc = retrieveRetc(returnDataKey);
 
