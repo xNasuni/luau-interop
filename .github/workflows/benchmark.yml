@@ -12,6 +12,7 @@ on:
 
 jobs:
   callgrind:
+    if: false
     strategy:
       matrix:
         os: [ubuntu-22.04]
