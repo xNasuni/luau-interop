@@ -1061,8 +1061,6 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
     return true;
 }
 
-#endif
-
 static void setupState(lua_State* L)
 {
     luaL_openlibs(L);
@@ -1096,8 +1094,7 @@ extern "C" lua_State* makeLuaState(int envId)
     // sandbox thread
     luaL_sandboxthread(L);
 
-// check for env (only for web/emscripten)
-#ifdef __EMSCRIPTEN__
+    // check for env (only for web/emscripten)
     ensureInterop();
 
     if (envId != 0)
@@ -1105,7 +1102,6 @@ extern "C" lua_State* makeLuaState(int envId)
         setEnvId(L, envId);
         setEnvFromJS(envId, (int)L);
     }
-#endif
 
     return L;
 }
@@ -1154,3 +1150,5 @@ extern "C" void luauClose(lua_State* L)
 {
     lua_close(L);
 }
+
+#endif
