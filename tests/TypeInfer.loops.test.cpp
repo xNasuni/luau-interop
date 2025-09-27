@@ -15,9 +15,8 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauSolverAgnosticStringification)
 LUAU_FASTFLAG(LuauNoScopeShallNotSubsumeAll)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
+LUAU_FASTFLAG(LuauIterableBindNotUnify)
 
 TEST_SUITE_BEGIN("TypeInferLoops");
 
@@ -257,14 +256,20 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_just_one_iterator_is_ok")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_loop_with_zero_iterators_dcr")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sffs[] = {
+        {FFlag::LuauSolverV2, true},
+        {FFlag::LuauIterableBindNotUnify, true},
+    };
 
     CheckResult result = check(R"(
         function no_iter() end
         for key in no_iter() do end
     )");
 
-    LUAU_REQUIRE_ERROR_COUNT(2, result);
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    auto err = get<GenericError>(result.errors[0]);
+    REQUIRE(err);
+    CHECK_EQ("for..in loops require at least one value to iterate over.  Got zero", err->message);
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_a_custom_iterator_should_type_check")
@@ -762,7 +767,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_generic_next")
 {
     ScopedFastFlag sff[] = {
         {FFlag::LuauNoScopeShallNotSubsumeAll, true},
-        {FFlag::LuauEagerGeneralization4, true},
     };
 
     CheckResult result = check(R"(
@@ -949,7 +953,6 @@ TEST_CASE_FIXTURE(Fixture, "for_loop_lower_bound_is_string_3")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cli_68448_iterators_need_not_accept_nil")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     // CLI-116500
     if (FFlag::LuauSolverV2)
         return;

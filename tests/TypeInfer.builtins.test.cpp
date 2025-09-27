@@ -11,11 +11,12 @@ using namespace Luau;
 
 LUAU_FASTFLAG(LuauSolverV2)
 LUAU_FASTFLAG(LuauTableCloneClonesType3)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
 LUAU_FASTFLAG(LuauNoScopeShallNotSubsumeAll)
-LUAU_FASTFLAG(LuauSuppressErrorsForMultipleNonviableOverloads)
-LUAU_FASTFLAG(LuauSolverAgnosticStringification)
-LUAU_FASTFLAG(LuauSolverAgnosticSetType)
+LUAU_FASTFLAG(LuauSubtypingPrimitiveAndGenericTableTypes)
+LUAU_FASTFLAG(LuauUnifyShortcircuitSomeIntersectionsAndUnions)
+LUAU_FASTFLAG(LuauFilterOverloadsByArity)
+LUAU_FASTFLAG(LuauSubtypingReportGenericBoundMismatches2)
+LUAU_FASTFLAG(LuauSubtypingGenericsDoesntUseVariance)
 
 TEST_SUITE_BEGIN("BuiltinTests");
 
@@ -374,7 +375,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_unpacks_arg_types_correctly")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_on_union_of_tables")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
         type A = {tag: "A", x: number}
         type B = {tag: "B", y: string}
@@ -419,7 +419,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_correctly_infers_type_of_array_
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_pack")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
         local t = table.pack(1, "foo", true)
     )");
@@ -430,7 +429,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "table_pack")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_pack_variadic")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
 --!strict
 function f(): (string, ...number)
@@ -446,7 +444,6 @@ local t = table.pack(f())
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_pack_reduce")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
         local t = table.pack(1, 2, true)
     )");
@@ -1108,7 +1105,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "assert_returns_false_and_string_iff_it_knows
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_freeze_is_generic")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
         local t1: {a: number} = {a = 42}
         local t2: {b: string} = {b = "hello"}
@@ -1589,9 +1585,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "string_find_should_not_crash")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_dot_clone_type_states")
 {
-    ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverAgnosticStringification, true}, {FFlag::LuauSolverAgnosticSetType, true}, {FFlag::LuauTableCloneClonesType3, true}
-    };
+    ScopedFastFlag sff{FFlag::LuauTableCloneClonesType3, true};
     CheckResult result = check(R"(
         local t1 = {}
         t1.x = 5
@@ -1724,8 +1718,6 @@ TEST_CASE_FIXTURE(Fixture, "write_only_table_assertion")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_into_any")
 {
-    ScopedFastFlag _{FFlag::LuauSuppressErrorsForMultipleNonviableOverloads, true};
-
     LUAU_REQUIRE_NO_ERRORS(check(R"(
 table.insert(1::any, 2::any)
     )"));
@@ -1733,7 +1725,12 @@ table.insert(1::any, 2::any)
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_requires_all_fields")
 {
-    ScopedFastFlag _{FFlag::LuauNoScopeShallNotSubsumeAll, true};
+    ScopedFastFlag _[] = {
+        {FFlag::LuauNoScopeShallNotSubsumeAll, true},
+        {FFlag::LuauFilterOverloadsByArity, true},
+        {FFlag::LuauSubtypingReportGenericBoundMismatches2, true},
+        {FFlag::LuauSubtypingGenericsDoesntUseVariance, true}
+    };
 
     CheckResult result = check(R"(
         local function huh(): { { x: number, y: string } }
@@ -1782,6 +1779,52 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "read_refinements_on_persistent_tables_known_
         end
     )"));
     CHECK_EQ("\"lol\"", toString(requireTypeAtPosition(Position{4, 23})));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "next_with_refined_any")
+{
+    ScopedFastFlag lsv2{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sffs[] = {
+        {FFlag::LuauSubtypingPrimitiveAndGenericTableTypes, true}, {FFlag::LuauUnifyShortcircuitSomeIntersectionsAndUnions, true}
+    };
+
+    CheckResult result = check(R"(
+        --!strict
+        local t: any = {"hello", "world"}
+        if type(t) == "table" and next(t) then
+	        local foo, bar = next(t)
+            local _ = foo
+            local _ = bar
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(toString(requireTypeAtPosition(Position{5, 23})), "unknown?");
+    CHECK_EQ(toString(requireTypeAtPosition(Position{6, 23})), "unknown");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "pairs_with_refined_any")
+{
+    ScopedFastFlag lsv2{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::LuauSubtypingPrimitiveAndGenericTableTypes, true};
+
+    CheckResult result = check(R"(
+        --!strict
+        local t: any = {"hello", "world"}
+        if type(t) == "table" and pairs(t) then
+	        local foo, bar, lorem = pairs(t)
+            local _ = foo
+            local _ = bar
+            local _ = lorem
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(toString(requireTypeAtPosition(Position{5, 23})), "({+ [unknown]: unknown +}, unknown?) -> (unknown?, unknown)");
+    CHECK_EQ(toString(requireTypeAtPosition(Position{6, 23})), "{+ [unknown]: unknown +}");
+    CHECK_EQ(toString(requireTypeAtPosition(Position{7, 23})), "nil");
 }
 
 TEST_SUITE_END();

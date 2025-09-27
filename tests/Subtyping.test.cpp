@@ -16,11 +16,11 @@
 #include <initializer_list>
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
-LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping2)
+LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping3)
 LUAU_FASTFLAG(LuauSubtypingGenericsDoesntUseVariance)
 LUAU_FASTFLAG(LuauVariadicAnyPackShouldBeErrorSuppressing)
 LUAU_FASTFLAG(LuauSubtypingGenericPacksDoesntUseVariance)
+LUAU_FASTFLAG(LuauPassBindableGenericsByReference)
 
 using namespace Luau;
 
@@ -76,6 +76,7 @@ struct SubtypeFixture : Fixture
     TypeFunctionRuntime typeFunctionRuntime{NotNull{&iceReporter}, NotNull{&limits}};
 
     ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff1{FFlag::LuauPassBindableGenericsByReference, true};
 
     ScopePtr rootScope{new Scope(getBuiltins()->emptyTypePack)};
     ScopePtr moduleScope{new Scope(rootScope)};
@@ -199,7 +200,7 @@ struct SubtypeFixture : Fixture
 
     SubtypingResult isSubtype(TypePackId subTy, TypePackId superTy)
     {
-        return subtyping.isSubtype(subTy, superTy, NotNull{rootScope.get()});
+        return subtyping.isSubtype(subTy, superTy, NotNull{rootScope.get()}, {});
     }
 
     TypeId helloType = arena.addType(SingletonType{StringSingleton{"hello"}});
@@ -1404,7 +1405,7 @@ TEST_CASE_FIXTURE(SubtypeFixture, "<T>({ x: T }) -> T <: ({ method: <T>({ x: T }
 
 TEST_CASE_FIXTURE(SubtypeFixture, "subtyping_reasonings_to_follow_a_reduced_type_function_instance")
 {
-    ScopedFastFlag sff{FFlag::LuauReturnMappedGenericPacksFromSubtyping2, true};
+    ScopedFastFlag sff{FFlag::LuauReturnMappedGenericPacksFromSubtyping3, true};
     ScopedFastFlag sff1{FFlag::LuauSubtypingGenericPacksDoesntUseVariance, true};
 
     TypeId longTy = arena.addType(
@@ -1756,10 +1757,6 @@ TEST_CASE_FIXTURE(SubtypeFixture, "substitute_a_generic_for_a_negation")
 
 TEST_CASE_FIXTURE(SubtypeFixture, "free_types_might_be_subtypes")
 {
-    ScopedFastFlag sff[] = {
-        {FFlag::LuauEagerGeneralization4, true},
-    };
-
     TypeId argTy = arena.freshType(getBuiltins(), moduleScope.get());
     FreeType* freeArg = getMutable<FreeType>(argTy);
     REQUIRE(freeArg);

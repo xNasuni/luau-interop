@@ -4,6 +4,7 @@
 
 #include "Luau/Ast.h"
 #include "Luau/Common.h"
+#include "Luau/HashUtil.h"
 #include "Luau/Simplify.h"
 #include "Luau/Subtyping.h"
 #include "Luau/Type.h"
@@ -12,7 +13,7 @@
 #include "Luau/TypeUtils.h"
 #include "Luau/Unifier2.h"
 
-LUAU_FASTFLAG(LuauEagerGeneralization4)
+LUAU_FASTFLAGVARIABLE(LuauPushTypeConstraintIntersection)
 
 namespace Luau
 {
@@ -26,25 +27,27 @@ struct BidirectionalTypePusher
     NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes;
     NotNull<DenseHashMap<const AstExpr*, TypeId>> astExpectedTypes;
 
-    NotNull<BuiltinTypes> builtinTypes;
-    NotNull<TypeArena> arena;
+    NotNull<ConstraintSolver> solver;
+    NotNull<const Constraint> constraint;
     NotNull<Unifier2> unifier;
     NotNull<Subtyping> subtyping;
 
     std::vector<IncompleteInference> incompleteInferences;
 
+    DenseHashSet<std::pair<TypeId, const AstExpr*>, PairHash<TypeId, const AstExpr*>> seen{{nullptr, nullptr}};
+
     BidirectionalTypePusher(
         NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes,
         NotNull<DenseHashMap<const AstExpr*, TypeId>> astExpectedTypes,
-        NotNull<BuiltinTypes> builtinTypes,
-        NotNull<TypeArena> arena,
+        NotNull<ConstraintSolver> solver,
+        NotNull<const Constraint> constraint,
         NotNull<Unifier2> unifier,
         NotNull<Subtyping> subtyping
     )
         : astTypes{astTypes}
         , astExpectedTypes{astExpectedTypes}
-        , builtinTypes{builtinTypes}
-        , arena{arena}
+        , solver{solver}
+        , constraint{constraint}
         , unifier{unifier}
         , subtyping{subtyping}
     {
@@ -55,10 +58,17 @@ struct BidirectionalTypePusher
         if (!astTypes->contains(expr))
         {
             LUAU_ASSERT(false);
-            return builtinTypes->errorType;
+            return solver->builtinTypes->errorType;
         }
 
         TypeId exprType = *astTypes->find(expr);
+
+        if (FFlag::LuauPushTypeConstraintIntersection)
+        {
+            if (seen.contains({expectedType, expr}))
+                return exprType;
+            seen.insert({expectedType, expr});
+        }
 
         expectedType = follow(expectedType);
         exprType = follow(exprType);
@@ -73,27 +83,16 @@ struct BidirectionalTypePusher
         // We'll have a cycle between trying to push `fact`'s type into its
         // arguments and generalizing `fact`.
 
-        if (FFlag::LuauEagerGeneralization4)
+        if (auto tfit = get<TypeFunctionInstanceType>(expectedType); tfit && tfit->state == TypeFunctionInstanceState::Unsolved)
         {
-            if (auto tfit = get<TypeFunctionInstanceType>(expectedType); tfit && tfit->state == TypeFunctionInstanceState::Unsolved)
-            {
-                incompleteInferences.push_back(IncompleteInference{expectedType, exprType, expr});
-                return exprType;
-            }
-
-            if (is<BlockedType, PendingExpansionType>(expectedType))
-            {
-                incompleteInferences.push_back(IncompleteInference{expectedType, exprType, expr});
-                return exprType;
-            }
+            incompleteInferences.push_back(IncompleteInference{expectedType, exprType, expr});
+            return exprType;
         }
-        else
+
+        if (is<BlockedType, PendingExpansionType>(expectedType))
         {
-            if (is<BlockedType, PendingExpansionType, TypeFunctionInstanceType>(expectedType))
-            {
-                incompleteInferences.push_back(IncompleteInference{expectedType, exprType, expr});
-                return exprType;
-            }
+            incompleteInferences.push_back(IncompleteInference{expectedType, exprType, expr});
+            return exprType;
         }
 
         if (is<AnyType, UnknownType>(expectedType))
@@ -122,14 +121,15 @@ struct BidirectionalTypePusher
         if (expr->is<AstExprConstantString>())
         {
             auto ft = get<FreeType>(exprType);
-            if (ft && get<SingletonType>(ft->lowerBound) && fastIsSubtype(builtinTypes->stringType, ft->upperBound) &&
-                fastIsSubtype(ft->lowerBound, builtinTypes->stringType))
+            if (ft && get<SingletonType>(ft->lowerBound) && fastIsSubtype(solver->builtinTypes->stringType, ft->upperBound) &&
+                fastIsSubtype(ft->lowerBound, solver->builtinTypes->stringType))
             {
                 // if the upper bound is a subtype of the expected type, we can push the expected type in
                 Relation upperBoundRelation = relate(ft->upperBound, expectedType);
                 if (upperBoundRelation == Relation::Subset || upperBoundRelation == Relation::Coincident)
                 {
                     emplaceType<BoundType>(asMutable(exprType), expectedType);
+                    solver->unblock(exprType, expr->location);
                     return exprType;
                 }
 
@@ -140,6 +140,7 @@ struct BidirectionalTypePusher
                 if (lowerBoundRelation == Relation::Subset || lowerBoundRelation == Relation::Coincident)
                 {
                     emplaceType<BoundType>(asMutable(exprType), expectedType);
+                    solver->unblock(exprType, expr->location);
                     return exprType;
                 }
             }
@@ -147,14 +148,15 @@ struct BidirectionalTypePusher
         else if (expr->is<AstExprConstantBool>())
         {
             auto ft = get<FreeType>(exprType);
-            if (ft && get<SingletonType>(ft->lowerBound) && fastIsSubtype(builtinTypes->booleanType, ft->upperBound) &&
-                fastIsSubtype(ft->lowerBound, builtinTypes->booleanType))
+            if (ft && get<SingletonType>(ft->lowerBound) && fastIsSubtype(solver->builtinTypes->booleanType, ft->upperBound) &&
+                fastIsSubtype(ft->lowerBound, solver->builtinTypes->booleanType))
             {
                 // if the upper bound is a subtype of the expected type, we can push the expected type in
                 Relation upperBoundRelation = relate(ft->upperBound, expectedType);
                 if (upperBoundRelation == Relation::Subset || upperBoundRelation == Relation::Coincident)
                 {
                     emplaceType<BoundType>(asMutable(exprType), expectedType);
+                    solver->unblock(exprType, expr->location);
                     return exprType;
                 }
 
@@ -165,6 +167,7 @@ struct BidirectionalTypePusher
                 if (lowerBoundRelation == Relation::Subset || lowerBoundRelation == Relation::Coincident)
                 {
                     emplaceType<BoundType>(asMutable(exprType), expectedType);
+                    solver->unblock(exprType, expr->location);
                     return exprType;
                 }
             }
@@ -176,6 +179,7 @@ struct BidirectionalTypePusher
             if (auto ft = get<FreeType>(exprType); ft && fastIsSubtype(ft->upperBound, expectedType))
             {
                 emplaceType<BoundType>(asMutable(exprType), expectedType);
+                solver->unblock(exprType, expr->location);
                 return exprType;
             }
 
@@ -191,6 +195,8 @@ struct BidirectionalTypePusher
             // TODO: Push argument / return types into the lambda.
             return exprType;
 
+        // TODO: CLI-169235: This probably ought to use the same logic as
+        // `index` to determine what the type of a given member is.
         if (auto exprTable = expr->as<AstExprTable>())
         {
             const TableType* expectedTableTy = get<TableType>(expectedType);
@@ -201,10 +207,20 @@ struct BidirectionalTypePusher
                 {
                     std::vector<TypeId> parts{begin(utv), end(utv)};
 
-                    std::optional<TypeId> tt = extractMatchingTableType(parts, exprType, builtinTypes);
+                    std::optional<TypeId> tt = extractMatchingTableType(parts, exprType, solver->builtinTypes);
 
                     if (tt)
                         (void)pushType(*tt, expr);
+                }
+                else if (auto itv = get<IntersectionType>(expectedType); FFlag::LuauPushTypeConstraintIntersection && itv)
+                {
+                    for (const auto part : itv)
+                        (void)pushType(part, expr);
+
+                    // Reset the expected type for this expression prior,
+                    // otherwise the expected type will be the last part
+                    // of the intersection, which does not seem ideal.
+                    (*astExpectedTypes)[expr] = expectedType;
                 }
 
                 return exprType;
@@ -229,7 +245,7 @@ struct BidirectionalTypePusher
                         //  { foo = bar }
                         //
                         // Then the intent is probably to push `T` into `bar`.
-                        if (expectedTableTy->indexer && fastIsSubtype(builtinTypes->stringType, expectedTableTy->indexer->indexType))
+                        if (expectedTableTy->indexer && fastIsSubtype(solver->builtinTypes->stringType, expectedTableTy->indexer->indexType))
                             (void)pushType(expectedTableTy->indexer->indexResultType, item.value);
 
                         // If it's just an extra property and the expected type
@@ -255,7 +271,7 @@ struct BidirectionalTypePusher
                 {
                     if (expectedTableTy->indexer)
                     {
-                        unifier->unify(expectedTableTy->indexer->indexType, builtinTypes->numberType);
+                        unifier->unify(expectedTableTy->indexer->indexType, solver->builtinTypes->numberType);
                         (void)pushType(expectedTableTy->indexer->indexResultType, item.value);
                     }
                 }
@@ -286,15 +302,15 @@ struct BidirectionalTypePusher
 PushTypeResult pushTypeInto(
     NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes,
     NotNull<DenseHashMap<const AstExpr*, TypeId>> astExpectedTypes,
-    NotNull<BuiltinTypes> builtinTypes,
-    NotNull<TypeArena> arena,
+    NotNull<ConstraintSolver> solver,
+    NotNull<const Constraint> constraint,
     NotNull<Unifier2> unifier,
     NotNull<Subtyping> subtyping,
     TypeId expectedType,
     const AstExpr* expr
 )
 {
-    BidirectionalTypePusher btp{astTypes, astExpectedTypes, builtinTypes, arena, unifier, subtyping};
+    BidirectionalTypePusher btp{astTypes, astExpectedTypes, solver, constraint, unifier, subtyping};
     (void)btp.pushType(expectedType, expr);
     return {std::move(btp.incompleteInferences)};
 }

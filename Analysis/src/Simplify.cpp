@@ -23,8 +23,10 @@ LUAU_DYNAMIC_FASTINTVARIABLE(LuauTypeSimplificationIterationLimit, 128)
 LUAU_FASTFLAG(LuauRefineDistributesOverUnions)
 LUAU_FASTFLAGVARIABLE(LuauSimplifyAnyAndUnion)
 LUAU_FASTFLAG(LuauReduceSetTypeStackPressure)
-LUAU_FASTFLAG(LuauPushTypeConstraint)
+LUAU_FASTFLAG(LuauPushTypeConstraint2)
 LUAU_FASTFLAGVARIABLE(LuauMorePreciseExternTableRelation)
+LUAU_FASTFLAGVARIABLE(LuauSimplifyRefinementOfReadOnlyProperty)
+LUAU_FASTFLAGVARIABLE(LuauExternTableIndexersIntersect)
 
 namespace Luau
 {
@@ -268,6 +270,11 @@ Relation relate(TypeId left, TypeId right, SimplifierSeenSet& seen);
 
 Relation relateTableToExternType(const TableType* table, const ExternType* cls, SimplifierSeenSet& seen)
 {
+    // If either the table or the extern type have an indexer, just bail.
+    // There's rapidly diminishing returns on doing something smart for
+    // indexers compared to refining exact members.
+    if (FFlag::LuauExternTableIndexersIntersect && (table->indexer || cls->indexer))
+        return Relation::Intersects;
 
     for (auto& [name, prop] : table->props)
     {
@@ -471,7 +478,7 @@ Relation relate(TypeId left, TypeId right, SimplifierSeenSet& seen)
 
     if (auto ut = get<UnionType>(left))
     {
-        if (FFlag::LuauPushTypeConstraint)
+        if (FFlag::LuauPushTypeConstraint2)
         {
             for (TypeId part : ut)
             {
@@ -1414,9 +1421,12 @@ std::optional<TypeId> TypeSimplifier::basicIntersect(TypeId left, TypeId right)
         if (1 == lt->props.size())
         {
             const auto [propName, leftProp] = *begin(lt->props);
+            const bool leftPropIsRefinable = FFlag::LuauSimplifyRefinementOfReadOnlyProperty
+                ? leftProp.isShared() || leftProp.isReadOnly()
+                : leftProp.isShared();
 
             auto it = rt->props.find(propName);
-            if (it != rt->props.end() && leftProp.isShared() && it->second.isShared())
+            if (it != rt->props.end() && leftPropIsRefinable && it->second.isShared())
             {
                 Relation r = relate(*leftProp.readTy, *it->second.readTy);
 
@@ -1428,7 +1438,7 @@ std::optional<TypeId> TypeSimplifier::basicIntersect(TypeId left, TypeId right)
                 case Relation::Coincident:
                     return right;
                 case Relation::Subset:
-                    if (1 == rt->props.size())
+                    if (1 == rt->props.size() && leftProp.isShared())
                         return left;
                     break;
                 default:

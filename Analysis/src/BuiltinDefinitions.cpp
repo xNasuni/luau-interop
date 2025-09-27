@@ -32,10 +32,10 @@
  */
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
 LUAU_FASTFLAGVARIABLE(LuauTableCloneClonesType3)
 LUAU_FASTFLAG(LuauUseWorkspacePropToChooseSolver)
 LUAU_FASTFLAG(LuauEmplaceNotPushBack)
+LUAU_FASTFLAG(LuauBuiltinTypeFunctionsArentGlobal)
 
 namespace Luau
 {
@@ -367,12 +367,19 @@ void registerBuiltinGlobals(Frontend& frontend, GlobalTypes& globals, bool typeC
 
     TypeArena& arena = globals.globalTypes;
     NotNull<BuiltinTypes> builtinTypes = globals.builtinTypes;
-    Scope* globalScope = nullptr; // NotNull<Scope> when removing FFlag::LuauEagerGeneralization4
-    if (FFlag::LuauEagerGeneralization4)
-        globalScope = globals.globalScope.get();
+    NotNull<Scope> globalScope{globals.globalScope.get()};
 
-    if (frontend.getLuauSolverMode() == SolverMode::New)
-        builtinTypeFunctions().addToScope(NotNull{&arena}, NotNull{globals.globalScope.get()});
+    if (FFlag::LuauBuiltinTypeFunctionsArentGlobal)
+    {
+        if (frontend.getLuauSolverMode() == SolverMode::New)
+            builtinTypes->typeFunctions->addToScope(NotNull{&arena}, NotNull{globals.globalScope.get()});
+    }
+    else
+    {
+        if (frontend.getLuauSolverMode() == SolverMode::New)
+            builtinTypeFunctions_DEPRECATED().addToScope(NotNull{&arena}, NotNull{globals.globalScope.get()});
+    }
+
 
     LoadDefinitionFileResult loadResult = frontend.loadDefinitionFile(
         globals, globals.globalScope, getBuiltinDefinitionSource(), "@luau", /* captureComments */ false, typeCheckForAutocomplete
@@ -441,7 +448,13 @@ void registerBuiltinGlobals(Frontend& frontend, GlobalTypes& globals, bool typeC
     if (frontend.getLuauSolverMode() == SolverMode::New)
     {
         // getmetatable : <T>(T) -> getmetatable<T>
-        TypeId getmtReturn = arena.addType(TypeFunctionInstanceType{builtinTypeFunctions().getmetatableFunc, {genericT}});
+        TypeId getmtReturn = arena.addType(
+            TypeFunctionInstanceType{
+                FFlag::LuauBuiltinTypeFunctionsArentGlobal ? builtinTypes->typeFunctions->getmetatableFunc
+                                                           : builtinTypeFunctions_DEPRECATED().getmetatableFunc,
+                {genericT}
+            }
+        );
         addGlobalBinding(globals, "getmetatable", makeFunction(arena, std::nullopt, {genericT}, {}, {genericT}, {getmtReturn}), "@luau");
     }
     else
@@ -453,7 +466,13 @@ void registerBuiltinGlobals(Frontend& frontend, GlobalTypes& globals, bool typeC
     if (frontend.getLuauSolverMode() == SolverMode::New)
     {
         // setmetatable<T: {}, MT>(T, MT) -> setmetatable<T, MT>
-        TypeId setmtReturn = arena.addType(TypeFunctionInstanceType{builtinTypeFunctions().setmetatableFunc, {genericT, genericMT}});
+        TypeId setmtReturn = arena.addType(
+            TypeFunctionInstanceType{
+                FFlag::LuauBuiltinTypeFunctionsArentGlobal ? builtinTypes->typeFunctions->setmetatableFunc
+                                                           : builtinTypeFunctions_DEPRECATED().setmetatableFunc,
+                {genericT, genericMT}
+            }
+        );
         addGlobalBinding(
             globals, "setmetatable", makeFunction(arena, std::nullopt, {genericT, genericMT}, {}, {genericT, genericMT}, {setmtReturn}), "@luau"
         );
@@ -485,7 +504,12 @@ void registerBuiltinGlobals(Frontend& frontend, GlobalTypes& globals, bool typeC
         TypeId genericT = arena.addType(GenericType{globalScope, "T"});
         TypeId refinedTy = arena.addType(
             TypeFunctionInstanceType{
-                NotNull{&builtinTypeFunctions().intersectFunc}, {genericT, arena.addType(NegationType{builtinTypes->falsyType})}, {}
+                NotNull{
+                    FFlag::LuauBuiltinTypeFunctionsArentGlobal ? &builtinTypes->typeFunctions->intersectFunc
+                                                               : &builtinTypeFunctions_DEPRECATED().intersectFunc
+                },
+                {genericT, arena.addType(NegationType{builtinTypes->falsyType})},
+                {}
             }
         );
 
@@ -513,12 +537,10 @@ void registerBuiltinGlobals(Frontend& frontend, GlobalTypes& globals, bool typeC
             TypePackId thePack = arena.addTypePack({genericTy});
             TypeId idTyWithMagic = arena.addType(FunctionType{{genericTy}, {}, thePack, thePack});
             ttv->props["freeze"] = makeProperty(idTyWithMagic, "@luau/global/table.freeze");
-            if (globalScope)
-                inferGenericPolarities(NotNull{&globals.globalTypes}, NotNull{globalScope}, idTyWithMagic);
+            inferGenericPolarities(NotNull{&globals.globalTypes}, NotNull{globalScope}, idTyWithMagic);
 
             TypeId idTy = arena.addType(FunctionType{{genericTy}, {}, thePack, thePack});
-            if (globalScope)
-                inferGenericPolarities(NotNull{&globals.globalTypes}, NotNull{globalScope}, idTy);
+            inferGenericPolarities(NotNull{&globals.globalTypes}, NotNull{globalScope}, idTy);
             ttv->props["clone"] = makeProperty(idTy, "@luau/global/table.clone");
         }
         else

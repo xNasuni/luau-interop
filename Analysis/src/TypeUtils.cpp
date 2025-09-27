@@ -13,11 +13,11 @@
 #include <algorithm>
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
 LUAU_FASTFLAGVARIABLE(LuauTidyTypeUtils)
 LUAU_FASTFLAG(LuauEmplaceNotPushBack)
 LUAU_FASTFLAGVARIABLE(LuauVariadicAnyPackShouldBeErrorSuppressing)
-LUAU_FASTFLAG(LuauPushTypeConstraint)
+LUAU_FASTFLAG(LuauPushTypeConstraint2)
+LUAU_FASTFLAG(LuauFilterOverloadsByArity)
 
 namespace Luau
 {
@@ -632,8 +632,6 @@ void trackInteriorFreeType(Scope* scope, TypeId ty)
 void trackInteriorFreeTypePack(Scope* scope, TypePackId tp)
 {
     LUAU_ASSERT(tp);
-    if (!FFlag::LuauEagerGeneralization4)
-        return;
 
     for (; scope; scope = scope->parent.get())
     {
@@ -717,7 +715,7 @@ std::optional<TypeId> extractMatchingTableType(std::vector<TypeId>& tables, Type
                     }
                 }
 
-                if (FFlag::LuauPushTypeConstraint && fastIsSubtype(propType, expectedType))
+                if (FFlag::LuauPushTypeConstraint2 && fastIsSubtype(propType, expectedType))
                     return ty;
             }
         }
@@ -748,6 +746,34 @@ AstExpr* unwrapGroup(AstExpr* expr)
         expr = group->expr;
 
     return expr;
+}
+
+bool isOptionalType(TypeId ty, NotNull<BuiltinTypes> builtinTypes)
+{
+    LUAU_ASSERT(FFlag::LuauFilterOverloadsByArity);
+
+    ty = follow(ty);
+
+    if (ty == builtinTypes->nilType || ty == builtinTypes->anyType || ty == builtinTypes->unknownType)
+        return true;
+    else if (const PrimitiveType* pt = get<PrimitiveType>(ty))
+        return pt->type == PrimitiveType::NilType;
+    else if (const UnionType* ut = get<UnionType>(ty))
+    {
+        for (TypeId option : ut)
+        {
+            option = follow(option);
+
+            if (option == builtinTypes->nilType || option == builtinTypes->anyType || option == builtinTypes->unknownType)
+                return true;
+            else if (const PrimitiveType* pt = get<PrimitiveType>(option); pt && pt->type == PrimitiveType::NilType)
+                return true;
+        }
+
+        return false;
+    }
+
+    return false;
 }
 
 bool isApproximatelyFalsyType(TypeId ty)

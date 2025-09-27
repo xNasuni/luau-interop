@@ -13,15 +13,11 @@
 
 LUAU_FASTFLAG(LuauInstantiateInSubtyping)
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
-LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping2)
+LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping3)
 LUAU_FASTFLAG(DebugLuauMagicTypes)
 LUAU_FASTFLAG(LuauLimitDynamicConstraintSolving3)
 LUAU_FASTINT(LuauSolverConstraintLimit)
-LUAU_FASTFLAG(LuauNewNonStrictSuppressSoloConstraintSolvingIncomplete)
 LUAU_FASTFLAG(LuauNameConstraintRestrictRecursiveTypes)
-LUAU_FASTFLAG(LuauSolverAgnosticStringification)
-LUAU_FASTFLAG(LuauSolverAgnosticSetType)
 
 using namespace Luau;
 
@@ -164,7 +160,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "require_a_variadic_function")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cross_module_table_freeze")
 {
-    ScopedFastFlag sff = {FFlag::LuauSolverAgnosticStringification, true};
     fileResolver.source["game/A"] = R"(
         --!strict
         return {
@@ -272,7 +267,6 @@ a = tbl.abc.def
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "general_require_type_mismatch")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     fileResolver.source["game/A"] = R"(
 return { def = 4 }
     )";
@@ -780,10 +774,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "leaky_generics")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    if (FFlag::LuauEagerGeneralization4)
-    {
-        CHECK_EQ("(unknown) -> unknown", toString(requireTypeAtPosition({13, 23})));
-    }
+    CHECK("(unknown) -> unknown" == toString(requireTypeAtPosition({13, 23})));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cycles_dont_make_everything_any")
@@ -827,7 +818,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cycles_dont_make_everything_any")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cross_module_function_mutation")
 {
-    ScopedFastFlag _[] = {{FFlag::LuauSolverV2, true}, {FFlag::LuauReturnMappedGenericPacksFromSubtyping2, true}};
+    ScopedFastFlag _[] = {{FFlag::LuauSolverV2, true}, {FFlag::LuauReturnMappedGenericPacksFromSubtyping3, true}};
 
     fileResolver.source["game/A"] = R"(
 function test2(a: number, b: string)
@@ -857,7 +848,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "internal_types_are_scrubbed_from_module")
         {FFlag::LuauSolverV2, true},
         {FFlag::DebugLuauMagicTypes, true},
         {FFlag::LuauLimitDynamicConstraintSolving3, true},
-        {FFlag::LuauNewNonStrictSuppressSoloConstraintSolvingIncomplete, true},
     };
 
     fileResolver.source["game/A"] = R"(
@@ -877,7 +867,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "internal_type_errors_are_only_reported_once"
         {FFlag::LuauSolverV2, true},
         {FFlag::DebugLuauMagicTypes, true},
         {FFlag::LuauLimitDynamicConstraintSolving3, true},
-        {FFlag::LuauNewNonStrictSuppressSoloConstraintSolvingIncomplete, true},
     };
 
     fileResolver.source["game/A"] = R"(

@@ -4,10 +4,8 @@
 #include "doctest.h"
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
 LUAU_FASTFLAG(LuauRefineDistributesOverUnions)
 LUAU_FASTFLAG(LuauReduceSetTypeStackPressure)
-LUAU_FASTFLAG(LuauSolverAgnosticStringification)
 
 using namespace Luau;
 
@@ -408,7 +406,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "prototyped_recursive_functions_but_has_futur
 {
     ScopedFastFlag sffs[] = {
         {FFlag::LuauSolverV2, true},
-        {FFlag::LuauEagerGeneralization4, true},
     };
 
     CheckResult result = check(R"(
@@ -586,7 +583,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "oss_1547")
 
 TEST_CASE_FIXTURE(Fixture, "modify_captured_table_field")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local state = { x = 0 }
         function incr()

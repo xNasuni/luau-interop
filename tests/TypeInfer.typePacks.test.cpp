@@ -12,8 +12,6 @@ using namespace Luau;
 LUAU_FASTFLAG(LuauSolverV2)
 
 LUAU_FASTFLAG(LuauInstantiateInSubtyping)
-LUAU_FASTFLAG(LuauEagerGeneralization4)
-LUAU_FASTFLAG(LuauSolverAgnosticStringification)
 LUAU_FASTFLAG(LuauRemoveGenericErrorForParams)
 LUAU_FASTFLAG(LuauAddErrorCaseForIncompatibleTypePacks)
 
@@ -91,9 +89,6 @@ TEST_CASE_FIXTURE(Fixture, "last_element_of_return_statement_can_itself_be_a_pac
 
 TEST_CASE_FIXTURE(Fixture, "higher_order_function")
 {
-    ScopedFastFlag _[] = {
-        {FFlag::LuauEagerGeneralization4, true},
-    };
     CheckResult result = check(R"(
         function apply(f, g, x)
             return f(g(x))
@@ -298,8 +293,6 @@ end
 
 TEST_CASE_FIXTURE(Fixture, "type_alias_type_packs")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
-
     CheckResult result = check(R"(
 type Packed<T...> = (T...) -> T...
 local a: Packed<>
@@ -364,8 +357,6 @@ local c: Packed<string, number, boolean>
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_alias_type_packs_import")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
-
     fileResolver.source["game/A"] = R"(
 export type Packed<T, U...> = { a: T, b: (U...) -> () }
 return {}
@@ -397,7 +388,6 @@ local d: { a: typeof(c) }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_pack_type_parameters")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     fileResolver.source["game/A"] = R"(
 export type Packed<T, U...> = { a: T, b: (U...) -> () }
 return {}
@@ -925,7 +915,6 @@ type C = A<string, (number), (boolean)>
 
 TEST_CASE_FIXTURE(Fixture, "type_alias_defaults_recursive_type")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverAgnosticStringification, true};
     CheckResult result = check(R"(
 type F<K = string, V = (K) -> ()> = (K) -> V
 type R = { m: F<R> }
