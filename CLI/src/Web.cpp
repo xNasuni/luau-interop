@@ -462,7 +462,16 @@ EM_JS(void, ensureInterop, (), {
         }
 
         return [type, value];
-    }
+    };
+
+    Module.isConstructor = function(fn) {
+        try {
+            Reflect.construct(String, [], fn);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    };
 });
 
 EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const char* keyCStr), {
@@ -721,7 +730,11 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const
             try {
                 const func = data.value;
                 const ctx = data.parent?.[Module.JS_VALUE]?.value ?? null;
-                returnData[0] = func.apply(ctx, args);
+                if (Module.isConstructor(func)) {
+                    returnData[0] = Reflect.construct(func, args);
+                } else {
+                    returnData[0] = func.apply(ctx, args);
+                }
             } catch (e) {
                 if (e instanceof Module.FatalJSError) {
                     throw e;
