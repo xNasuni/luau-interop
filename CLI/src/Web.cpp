@@ -2,7 +2,6 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#endif
 
 #include "lua.h"
 #include "lualib.h"
@@ -18,7 +17,6 @@
 
 #include <string.h>
 
-#ifdef __EMSCRIPTEN__
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
@@ -116,6 +114,7 @@ EM_JS(void, ensureInterop, (), {
     Module.environments = Module.environments || [];
 
     Module.nextJSRef = Module.nextJSRef || -1;
+    Module.nextTXKey = Module.nextTXKey || 0;
 
     class FatalJSError extends Error {
         constructor(message) {
@@ -270,7 +269,7 @@ EM_JS(void, ensureInterop, (), {
         }
 
         const trimmed = args.slice(0, args.findLastIndex(x => x != undefined) + 1);
-        const argDataKey = Module.transactionData.length;
+        const argDataKey = Module.nextTXKey++;
 
         Module.transactionData[argDataKey] = trimmed;
 
@@ -325,7 +324,7 @@ EM_JS(void, ensureInterop, (), {
     };
 
     Module.getPersistentRef = function(jsValue, parent, key) {
-        if (Module.jsValueReverse.has(jsValue)) {
+        if (Module.jsValueReverse.has(jsValue) && Module.jsValueReverse.get(jsValue)?.[Module.JS_VALUE]?.parent == parent) {
             return Module.jsValueReverse.get(jsValue);
         }
 
@@ -334,7 +333,7 @@ EM_JS(void, ensureInterop, (), {
             [Module.JS_VALUE]: {
                 ref,
                 value: jsValue,
-                parent,
+                parent: Module.jsValueReverse.has(parent) ? Module.jsValueCache.get(Module.jsValueReverse.get(parent)) : parent,
                 key,
                 released: false,
                 release() {
@@ -466,11 +465,11 @@ EM_JS(void, ensureInterop, (), {
     }
 });
 
-EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* pathCStr, const char* keyCStr), {
-    const path = JSON.parse(UTF8ToString(pathCStr));
+EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const char* keyCStr), {
+    const jsRefId = JSON.parse(UTF8ToString(jsRefIdStr));
     const key = JSON.parse(UTF8ToString(keyCStr));
 
-    const data = Module.jsValueCache.get(path);
+    const data = Module.jsValueCache.get(jsRefId);
 
     if (data) {
         const keyData = Module.luauToJsValue(L_ptr, key);
@@ -650,7 +649,7 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
 
 // clang-format off
 EM_JS(int, pushTransactionString, (const char* str), {
-    const transactionKey = Module.transactionData.length;
+    const transactionKey = Module.nextTXKey++;
     Module.transactionData[transactionKey] = UTF8ToString(str);
 
     return transactionKey;
@@ -667,21 +666,21 @@ extern "C" int getLuaValue(lua_State* L, int index)
 
 int proxy_index(lua_State* L)
 {
-    const char* path = lua_tostring(L, lua_upvalueindex(1));
+    const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
 
     int keyType = lua_type(L, 2);
 
     if (isValueType(keyType) || isReferenceType(keyType))
     {
         int ref = LUA_REFNIL;
-        std::string keyJson = serializeLuaValue(L, 2, &ref);
+        std::string luauKeyJson = serializeLuaValue(L, 2, &ref);
         lua_unref(L, ref);
 
         int envId = getEnvId(L);
 
         if (envId != -1)
         {
-            return getJSProperty((int)L, envId, path, keyJson.c_str());
+            return getJSProperty((int)L, envId, jsRefIdStr, luauKeyJson.c_str());
         }
         else
         {
@@ -691,14 +690,14 @@ int proxy_index(lua_State* L)
     }
     else
     {
-        fprintwarn("illegal type: unsupported key type '%s' for object '%s'", luauTypeName(keyType), path);
+        fprintwarn("illegal type: unsupported key type '%s' for object '%s'", luauTypeName(keyType), jsRefIdStr);
         return 0;
     }
 }
 
 // clang-format off
-EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* argsJson), {
-    const pathStr = UTF8ToString(path);
+EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const char* argsJson), {
+    const pathStr = UTF8ToString(jsRefIdJson);
     const argsStr = UTF8ToString(argsJson);
 
     const rawArgs = JSON.parse(argsStr);
@@ -716,14 +715,13 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
 
     if (Module.jsValueCache.has(key)) {
         const data = Module.jsValueCache.get(key)[Module.JS_VALUE];
+        const returnData = [null];
 
         if (data && data.value) {
-            const func = data.value;
-            const ctx = data.parent ?? null;
-            var returns = null;
-
             try {
-                returns = func.apply(ctx, args);
+                const func = data.value;
+                const ctx = data.parent?.[Module.JS_VALUE]?.value ?? null;
+                returnData[0] = func.apply(ctx, args);
             } catch (e) {
                 if (e instanceof Module.FatalJSError) {
                     throw e;
@@ -736,8 +734,7 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
             // possibly re-enable in the future for long term applications
             // args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
 
-            const returnData = returns instanceof Array ? returns : [returns];
-            trimmed = returnData;
+            trimmed = Array.isArray(returnData[0]) ? [...returnData[0]] : [returnData[0]];
         } else {
             Module.fprintwarn("illegal state: no js val found for path", pathStr);
             return luaError('not tied to valid jval');
@@ -747,7 +744,7 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* path, const char* 
         return luaError('not tied to valid ref');
     }
 
-    const returnDataKey = Module.transactionData.length;
+    const returnDataKey = Module.nextTXKey++;
     Module.transactionData[returnDataKey] = trimmed;
 
     return returnDataKey;
@@ -759,15 +756,13 @@ EM_JS(int, retrieveRetc, (int returnDataKey), {
     return count;
 });
 
-EM_JS(int, pushRetData, (int L_ptr, int returnDataKey, int argc), {
+EM_JS(int, pushRetData, (int L_ptr, int returnDataKey), {
     const returnData = Module.transactionData[returnDataKey];
-    if (!returnData) {
-        Module.fprintwarn(`illegal state: no return data for key '${returnDataKey}' but pushed with nonzero argc '${argc}'`);
+    delete Module.transactionData[returnDataKey];
+
+    if (!returnData || !Array.isArray(returnData) || returnData.length <= 0) {
         return 0;
     }
-
-    const count = Array.isArray(returnData) ? returnData.length : 1;
-    delete Module.transactionData[returnDataKey];
 
     returnData.forEach((data) => {
         const [type, value] = Module.jsToLuauValue(null, data);
@@ -776,11 +771,12 @@ EM_JS(int, pushRetData, (int L_ptr, int returnDataKey, int argc), {
 
     return returnData.length;
 });
+
 // clang-format on
 
 int proxy_call(lua_State* L)
 {
-    const char* path = lua_tostring(L, lua_upvalueindex(1));
+    const char* jsRefId = lua_tostring(L, lua_upvalueindex(1));
     int envId = getEnvId(L);
 
     if (envId == -1)
@@ -803,7 +799,7 @@ int proxy_call(lua_State* L)
     }
     argsJson += "]";
 
-    int returnDataKey = callJSFunction((int)L, envId, path, argsJson.c_str());
+    int returnDataKey = callJSFunction((int)L, envId, jsRefId, argsJson.c_str());
 
     if (returnDataKey == -1)
     {
@@ -816,18 +812,7 @@ int proxy_call(lua_State* L)
         return 0;
     }
 
-    int retc = retrieveRetc(returnDataKey);
-
-    lua_settop(L, argc);
-
-    if (retc >= 1)
-    {
-        return pushRetData((int)L, returnDataKey, retc);
-    }
-    else
-    {
-        return 0;
-    }
+    return pushRetData((int)L, returnDataKey);
 }
 
 void pushValueToLua(lua_State* L, const char* type, const char* value, const char* key = nullptr)
@@ -1022,7 +1007,7 @@ extern "C" void luaUnref(lua_State* L, int ref)
 // clang-format off
 EM_JS(int, sendValueToJS, (const char* valueJson), {
     const value = JSON.parse(UTF8ToString(valueJson));
-    const key = Module.transactionData.length;
+    const key = Module.nextTXKey++;
 
     Module.transactionData[key] = value;
 
