@@ -21,12 +21,11 @@ LUAU_FASTFLAG(LuauSolverV2)
 LUAU_DYNAMIC_FASTINTVARIABLE(LuauSimplificationComplexityLimit, 8)
 LUAU_DYNAMIC_FASTINTVARIABLE(LuauTypeSimplificationIterationLimit, 128)
 LUAU_FASTFLAG(LuauRefineDistributesOverUnions)
-LUAU_FASTFLAGVARIABLE(LuauSimplifyAnyAndUnion)
 LUAU_FASTFLAG(LuauReduceSetTypeStackPressure)
 LUAU_FASTFLAG(LuauPushTypeConstraint2)
-LUAU_FASTFLAGVARIABLE(LuauMorePreciseExternTableRelation)
 LUAU_FASTFLAGVARIABLE(LuauSimplifyRefinementOfReadOnlyProperty)
 LUAU_FASTFLAGVARIABLE(LuauExternTableIndexersIntersect)
+LUAU_FASTFLAGVARIABLE(LuauSimplifyMoveTableProps)
 
 namespace Luau
 {
@@ -648,31 +647,7 @@ Relation relate(TypeId left, TypeId right, SimplifierSeenSet& seen)
         }
 
         if (auto re = get<ExternType>(right))
-        {
-            if (FFlag::LuauMorePreciseExternTableRelation)
-                return relateTableToExternType(lt, re, seen);
-
-            Relation overall = Relation::Coincident;
-
-            for (auto& [name, prop] : lt->props)
-            {
-                if (auto propInExternType = re->props.find(name); propInExternType != re->props.end())
-                {
-                    LUAU_ASSERT(prop.readTy && propInExternType->second.readTy);
-                    Relation propRel = relate(*prop.readTy, *propInExternType->second.readTy, seen);
-
-                    if (propRel == Relation::Disjoint)
-                        return Relation::Disjoint;
-
-                    if (propRel == Relation::Coincident)
-                        continue;
-
-                    overall = Relation::Intersects;
-                }
-            }
-
-            return overall;
-        }
+            return relateTableToExternType(lt, re, seen);
 
         // TODO metatables
 
@@ -692,22 +667,8 @@ Relation relate(TypeId left, TypeId right, SimplifierSeenSet& seen)
             return Relation::Disjoint;
         }
 
-        if (FFlag::LuauMorePreciseExternTableRelation)
-        {
-            if (auto tbl = get<TableType>(right))
-                return flip(relateTableToExternType(tbl, ct, seen));
-        }
-        else
-        {
-            if (is<TableType>(right))
-            {
-                // FIXME: This could be better in that we can say a table only
-                // intersects with an extern type if they share a property, but
-                // for now it is within the contract of the function to claim
-                // the two intersect.
-                return Relation::Intersects;
-            }
-        }
+        if (auto tbl = get<TableType>(right))
+            return flip(relateTableToExternType(tbl, ct, seen));
 
         return Relation::Disjoint;
     }
@@ -1467,11 +1428,25 @@ std::optional<TypeId> TypeSimplifier::basicIntersect(TypeId left, TypeId right)
 
             if (areDisjoint)
             {
-                TableType::Props mergedProps = lt->props;
-                for (const auto& [name, rightProp] : rt->props)
-                    mergedProps[name] = rightProp;
 
-                return arena->addType(TableType{mergedProps, std::nullopt, TypeLevel{}, lt->scope, TableState::Sealed});
+                if (FFlag::LuauSimplifyMoveTableProps)
+                {
+                    TableType merged{TableState::Sealed, TypeLevel{}, lt->scope};
+                    merged.props = lt->props;
+
+                    for (const auto& [name, rightProp] : rt->props)
+                        merged.props[name] = rightProp;
+
+                    return arena->addType(std::move(merged));
+                }
+                else
+                {
+                    TableType::Props mergedProps = lt->props;
+                    for (const auto& [name, rightProp] : rt->props)
+                        mergedProps[name] = rightProp;
+
+                    return arena->addType(TableType{mergedProps, std::nullopt, TypeLevel{}, lt->scope, TableState::Sealed});
+                }
             }
         }
 
@@ -1527,9 +1502,9 @@ TypeId TypeSimplifier::intersect(TypeId left, TypeId right)
         return right;
     if (get<UnknownType>(right) && !get<ErrorType>(left))
         return left;
-    if (FFlag::LuauSimplifyAnyAndUnion && get<AnyType>(left) && get<UnionType>(right))
+    if (get<AnyType>(left) && get<UnionType>(right))
         return union_(builtinTypes->errorType, right);
-    if (FFlag::LuauSimplifyAnyAndUnion && get<UnionType>(left) && get<AnyType>(right))
+    if (get<UnionType>(left) && get<AnyType>(right))
         return union_(builtinTypes->errorType, left);
     if (get<AnyType>(left))
         return arena->addType(UnionType{{right, builtinTypes->errorType}});

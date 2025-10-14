@@ -5,6 +5,7 @@
 #include "Luau/AstQuery.h"
 #include "Luau/Common.h"
 #include "Luau/Type.h"
+#include "ScopedFlags.h"
 #include "doctest.h"
 
 #include "Luau/Normalize.h"
@@ -16,6 +17,7 @@ LUAU_FASTINT(LuauTypeInferRecursionLimit)
 LUAU_FASTINT(LuauNormalizeIntersectionLimit)
 LUAU_FASTINT(LuauNormalizeUnionLimit)
 LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping3)
+LUAU_FASTFLAG(LuauNormalizerUnionTyvarsTakeMaxSize)
 
 using namespace Luau;
 
@@ -103,9 +105,10 @@ TEST_CASE_FIXTURE(IsSubtypeFixture, "variadic_functions_with_no_head")
     CHECK(!isSubtype(a, b));
 }
 
-#if 0
 TEST_CASE_FIXTURE(IsSubtypeFixture, "variadic_function_with_head")
 {
+    ScopedFastFlag _{FFlag::LuauSolverV2, true};
+
     check(R"(
         local a: (...number) -> ()
         local b: (number, number) -> ()
@@ -117,7 +120,6 @@ TEST_CASE_FIXTURE(IsSubtypeFixture, "variadic_function_with_head")
     CHECK(!isSubtype(b, a));
     CHECK(isSubtype(a, b));
 }
-#endif
 
 TEST_CASE_FIXTURE(IsSubtypeFixture, "union")
 {
@@ -252,9 +254,10 @@ TEST_CASE_FIXTURE(IsSubtypeFixture, "tables")
     CHECK(!isSubtype(b, d));
 }
 
-#if 0
 TEST_CASE_FIXTURE(IsSubtypeFixture, "table_indexers_are_invariant")
 {
+    ScopedFastFlag _{FFlag::LuauSolverV2, true};
+
     check(R"(
         local a: {[string]: number}
         local b: {[string]: any}
@@ -274,6 +277,8 @@ TEST_CASE_FIXTURE(IsSubtypeFixture, "table_indexers_are_invariant")
 
 TEST_CASE_FIXTURE(IsSubtypeFixture, "mismatched_indexers")
 {
+    ScopedFastFlag _{FFlag::LuauSolverV2, true};
+
     check(R"(
         local a: {x: number}
         local b: {[string]: number}
@@ -291,6 +296,7 @@ TEST_CASE_FIXTURE(IsSubtypeFixture, "mismatched_indexers")
     CHECK(isSubtype(b, c));
 }
 
+#if 0
 TEST_CASE_FIXTURE(IsSubtypeFixture, "cyclic_table")
 {
     check(R"(
@@ -730,7 +736,7 @@ TEST_CASE_FIXTURE(NormalizeFixture, "union_function_and_top_function")
 
 TEST_CASE_FIXTURE(NormalizeFixture, "negated_function_is_anything_except_a_function")
 {
-    CHECK("(boolean | buffer | class | number | string | table | thread)?" == toString(normal(R"(
+    CHECK("(boolean | buffer | number | string | table | thread | userdata)?" == toString(normal(R"(
         Not<fun>
     )")));
 }
@@ -755,7 +761,7 @@ TEST_CASE_FIXTURE(NormalizeFixture, "trivial_intersection_inhabited")
 
 TEST_CASE_FIXTURE(NormalizeFixture, "bare_negated_boolean")
 {
-    CHECK("(buffer | class | function | number | string | table | thread)?" == toString(normal(R"(
+    CHECK("(buffer | function | number | string | table | thread | userdata)?" == toString(normal(R"(
         Not<boolean>
     )")));
 }
@@ -918,9 +924,10 @@ TEST_CASE_FIXTURE(NormalizeFixture, "negations_of_extern_types")
 {
     createSomeExternTypes(getFrontend());
     CHECK("(Parent & ~Child) | Unrelated" == toString(normal("(Parent & Not<Child>) | Unrelated")));
-    CHECK("((class & ~Child) | boolean | buffer | function | number | string | table | thread)?" == toString(normal("Not<Child>")));
+
+    CHECK("((userdata & ~Child) | boolean | buffer | function | number | string | table | thread)?" == toString(normal("Not<Child>")));
     CHECK("never" == toString(normal("Not<Parent> & Child")));
-    CHECK("((class & ~Parent) | Child | boolean | buffer | function | number | string | table | thread)?" == toString(normal("Not<Parent> | Child")));
+    CHECK("((userdata & ~Parent) | Child | boolean | buffer | function | number | string | table | thread)?" == toString(normal("Not<Parent> | Child")));
     CHECK("(boolean | buffer | function | number | string | table | thread)?" == toString(normal("Not<cls>")));
     CHECK(
         "(Parent | Unrelated | boolean | buffer | function | number | string | table | thread)?" ==
@@ -951,7 +958,7 @@ TEST_CASE_FIXTURE(NormalizeFixture, "top_table_type")
 TEST_CASE_FIXTURE(NormalizeFixture, "negations_of_tables")
 {
     CHECK(nullptr == toNormalizedType("Not<{}>", FFlag::LuauSolverV2 ? 1 : 0));
-    CHECK("(boolean | buffer | class | function | number | string | thread)?" == toString(normal("Not<tbl>")));
+    CHECK("(boolean | buffer | function | number | string | thread | userdata)?" == toString(normal("Not<tbl>")));
     CHECK("table" == toString(normal("Not<Not<tbl>>")));
 }
 
@@ -1127,6 +1134,27 @@ TEST_CASE_FIXTURE(NormalizeFixture, "free_type_intersection_ordering")
     CHECK_EQ("'a & string", toString(typeFromNormal(*normB)));
 }
 
+TEST_CASE_FIXTURE(NormalizeFixture, "tyvar_limit_one_sided_intersection" * doctest::timeout(0.5))
+{
+    ScopedFastFlag _{FFlag::LuauNormalizerUnionTyvarsTakeMaxSize, true}; // Affects stringification of free types.
+
+    std::vector<TypeId> options;
+    for (auto i = 0; i < 120; i++)
+        options.push_back(arena.freshType(getBuiltins(), getGlobalScope()));
+
+    TypeId target = arena.addType(IntersectionType{
+        {
+            getBuiltins()->unknownType,
+            arena.addType(UnionType{std::move(options)})
+        },
+    });
+
+    // If we try to normalize 120 free variables against `unknown`, then exit
+    // early and claim we've hit the limit.
+    auto norm = normalize(target);
+    REQUIRE(!norm);
+}
+
 TEST_CASE_FIXTURE(BuiltinsFixture, "normalizer_should_be_able_to_detect_cyclic_tables_and_not_stack_overflow")
 {
     if (!FFlag::LuauSolverV2)
@@ -1251,6 +1279,7 @@ do end
         InternalCompilerError
     );
 }
+
 #if 0
 TEST_CASE_FIXTURE(BuiltinsFixture, "fuzz_union_type_pack_cycle")
 {

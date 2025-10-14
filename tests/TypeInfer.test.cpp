@@ -27,7 +27,6 @@ LUAU_FASTINT(LuauRecursionLimit)
 LUAU_FASTINT(LuauTypeInferTypePackLoopLimit)
 LUAU_FASTINT(LuauTypeInferRecursionLimit)
 LUAU_FASTFLAG(LuauDfgAllowUpdatesInLoops)
-LUAU_FASTFLAG(LuauInferActualIfElseExprType2)
 LUAU_FASTFLAG(DebugLuauMagicTypes)
 LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping3)
 LUAU_FASTFLAG(LuauMissingFollowMappedGenericPacks)
@@ -37,6 +36,7 @@ LUAU_FASTFLAG(LuauParametrizedAttributeSyntax)
 LUAU_FASTFLAG(LuauNoConstraintGenRecursionLimitIce)
 LUAU_FASTFLAG(LuauTryToOptimizeSetTypeUnification)
 LUAU_FASTFLAG(LuauDontReferenceScopePtrFromHashTable)
+LUAU_FASTFLAG(LuauConsiderErrorSuppressionInTypes)
 
 using namespace Luau;
 
@@ -299,18 +299,13 @@ TEST_CASE_FIXTURE(Fixture, "occurs_check_does_not_recurse_forever_if_asked_to_tr
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
-#if 0
-// CLI-29798
 TEST_CASE_FIXTURE(Fixture, "crazy_complexity")
 {
     CheckResult result = check(R"(
         --!nonstrict
         A:A():A():A():A():A():A():A():A():A():A():A()
     )");
-
-    MESSAGE("OK!  Allocated ", typeChecker.types.size(), " types");
 }
-#endif
 
 TEST_CASE_FIXTURE(Fixture, "type_errors_infer_types")
 {
@@ -2091,8 +2086,6 @@ TEST_CASE_FIXTURE(Fixture, "fuzz_generalize_one_remove_type_assert_2")
     LUAU_REQUIRE_NO_ERROR(result, ConstraintSolvingIncompleteError);
 }
 
-#if 0
-
 TEST_CASE_FIXTURE(BuiltinsFixture, "fuzz_simplify_combinatorial_explosion")
 {
     ScopedFastFlag sffs[] = {
@@ -2109,8 +2102,6 @@ _ = {[(_G)]=_,[_[_[_]][_[_]][nil][_]]={_G=_,},_[_[_]][_][_],n0={[_]=_,_G=_,},248
 local _
     )"));
 }
-
-#endif
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "fuzz_missing_follow_table_freeze")
 {
@@ -2436,10 +2427,7 @@ end then _._G else ...
 
 TEST_CASE_FIXTURE(Fixture, "oss_1815_verbatim")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauInferActualIfElseExprType2, true},
-    };
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
 
     CheckResult results = check(R"(
         --!strict
@@ -2468,10 +2456,7 @@ TEST_CASE_FIXTURE(Fixture, "oss_1815_verbatim")
 
 TEST_CASE_FIXTURE(Fixture, "if_then_else_bidirectional_inference")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauInferActualIfElseExprType2, true},
-    };
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
 
     CheckResult results = check(R"(
         type foo = {
@@ -2489,10 +2474,7 @@ TEST_CASE_FIXTURE(Fixture, "if_then_else_bidirectional_inference")
 
 TEST_CASE_FIXTURE(Fixture, "if_then_else_two_errors")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauInferActualIfElseExprType2, true},
-    };
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
 
     CheckResult results = check(R"(
         type foo = {
@@ -2676,27 +2658,6 @@ TEST_CASE_FIXTURE(Fixture, "nested_functions_can_depend_on_outer_generics")
     CHECK("number" == toString(tm->givenType));
 }
 
-TEST_CASE_FIXTURE(Fixture, "avoid_unification_inferring_never_for_refined_param")
-{
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauTryToOptimizeSetTypeUnification, true},
-    };
-
-    LUAU_REQUIRE_NO_ERRORS(check(R"(
-        local function __remove(__: number?) end
-
-        function __removeItem(self, itemId: number)
-            local index = self.getItem(itemId)
-            if index then
-               __remove(index)
-            end
-        end
-    )"));
-
-    CHECK_EQ("({ read getItem: (number) -> (number?, ...unknown) }, number) -> ()", toString(requireType("__removeItem")));
-}
-
 TEST_CASE_FIXTURE(BuiltinsFixture, "unterminated_function_body_causes_constraint_generator_crash")
 {
     ScopedFastFlag _{FFlag::LuauDontReferenceScopePtrFromHashTable, true};
@@ -2738,6 +2699,23 @@ export type t12 = {
 	pb:number
 }
 )");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "any_type_in_function_argument_should_not_error")
+{
+    ScopedFastFlag sff{FFlag::LuauConsiderErrorSuppressionInTypes, true};
+    CheckResult result = check(R"(
+--!strict
+local function f(u: string) end
+
+local t: {[any]: any} = {}
+
+for k in t do
+	f(k)
+end
+)");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
 }
 
 TEST_SUITE_END();
