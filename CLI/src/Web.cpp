@@ -462,15 +462,6 @@ EM_JS(void, ensureInterop, (), {
 
         return [type, value];
     };
-
-    Module.isConstructor = function(fn) {
-        try {
-            Reflect.construct(String, [], fn);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    };
 });
 
 EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const char* keyCStr), {
@@ -834,10 +825,17 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const
             try {
                 const func = data.value;
                 const ctx = data.parent?.[Module.JS_VALUE]?.value ?? null;
-                if (Module.isConstructor(func)) {
-                    returnData[0] = Reflect.construct(func, args);
-                } else {
+        
+                try {
                     returnData[0] = func.apply(ctx, args);
+                } catch (e) {
+                    // todo(xNasuni): find better method of detecting constructors
+                    if (e.toString().includes("constructor") &&
+                        e.toString().includes("new")) {
+                        returnData[0] = Reflect.construct(func, args);
+                    } else {
+                        throw e;
+                    }
                 }
             } catch (e) {
                 if (e instanceof Module.FatalJSError) {
