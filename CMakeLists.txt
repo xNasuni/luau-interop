@@ -290,7 +290,7 @@ if(LUAU_BUILD_WEB)
     )
 
     # declare exported functions to emscripten
-    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sMODULARIZE=1 -sEXPORT_NAME=LuauWasmModule)
+    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576)
 
     # add -fexceptions for emscripten to allow exceptions to be caught in C++
     target_link_options(Luau.Web PRIVATE -fexceptions)

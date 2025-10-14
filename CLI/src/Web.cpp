@@ -103,19 +103,6 @@ EM_JS(void, setEnvFromJS, (int envId, int L_ptr), {
 });
 
 EM_JS(void, ensureInterop, (), {
-    Module.LUA_VALUE = Module.LUA_VALUE || Symbol("LuaValue");
-    Module.JS_VALUE = Module.JS_VALUE || Symbol("JsValue");
-
-    Module.luaValueCache = Module.luaValueCache || new Map();
-    Module.jsValueCache = Module.jsValueCache || new Map();
-    Module.jsValueReverse = Module.jsValueReverse || new Map();
-
-    Module.transactionData = Module.transactionData || [];
-    Module.environments = Module.environments || [];
-
-    Module.nextJSRef = Module.nextJSRef || -1;
-    Module.nextTXKey = Module.nextTXKey || 0;
-
     class FatalJSError extends Error {
         constructor(message) {
             super(message);
@@ -173,9 +160,6 @@ EM_JS(void, ensureInterop, (), {
                 ref,
                 type,
                 state,
-                toString() {
-                    return "[LuaReference " + type + " " + ref + "]";
-                },
                 persistentRef() {
                     return Module.LuaValue(this.state, this.type, Module.ccall('luaCloneref', 'int', [ 'number', 'number' ], [ this.state, this.ref ]));
                 },
@@ -187,6 +171,9 @@ EM_JS(void, ensureInterop, (), {
                     Module.ccall('luaUnref', 'void', [ 'number', 'number' ], [ this.state, this.ref ]);
                     this.released = true;
                 }
+            },
+            toString() {
+                return "[LuaReference " + type + " " + ref + "]";
             }
         };
 
@@ -233,7 +220,6 @@ EM_JS(void, ensureInterop, (), {
                     if (prop in obj) {
                         return obj[prop];
                     }
-
                     return Module.indexLuaTable(obj, prop);
                 },
                 set(target, prop, value, receiver) {
@@ -262,7 +248,7 @@ EM_JS(void, ensureInterop, (), {
 
     Module.callLuaFunction = function(luaFunction, args) {
         const luaFunctionData = luaFunction[Module.LUA_VALUE];
-
+        
         if (luaFunctionData.released) {
             throw new GlueError("attempt to call released function");
             return;
@@ -342,6 +328,9 @@ EM_JS(void, ensureInterop, (), {
                     Module.jsValueReverse.delete(jsValue);
                     this.released = true;
                 }
+            },
+            toString() {
+                return "[JsReference " + typeof jsValue + " " + ref + "]";
             }
         };
 
@@ -405,7 +394,17 @@ EM_JS(void, ensureInterop, (), {
 
     Module.jsToLuauValue = function(parent, key) {
         let type = "unknown";
-        let value = parent != null ? parent?.[key] ?? null : key;
+        let value = null;
+        
+        if (parent != null) {
+            if (parent instanceof Map) {
+                value = parent.get(key) ?? null;
+            } else {
+                value = parent[key] ?? null;
+            }
+        } else {
+            value = key;
+        }
 
         if (!value || typeof value == "undefined") {
             type = "nil";
@@ -481,11 +480,17 @@ EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const c
     const data = Module.jsValueCache.get(jsRefId);
 
     if (data) {
-        const keyData = Module.luauToJsValue(L_ptr, key);
         if (!data[Module.JS_VALUE]) {
             Module.fprintwarn("illegal state: js callback on non js data");  
-            return;
+            return 0;
         };
+
+        if (data[Module.JS_VALUE].released) {
+            Module.fprintwarn("illegal state: lua read on released js data"); 
+            return 0;
+        };
+
+        const keyData = Module.luauToJsValue(L_ptr, key);
 
         const [type, value] = Module.jsToLuauValue(data[Module.JS_VALUE].value, keyData);
 
@@ -495,6 +500,54 @@ EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const c
 
     return 0;
 });
+
+EM_JS(int, setJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const char* keyCStr, const char* valueCStr), {
+    const jsRefId = JSON.parse(UTF8ToString(jsRefIdStr));
+    const key = JSON.parse(UTF8ToString(keyCStr));
+    const value = JSON.parse(UTF8ToString(valueCStr));
+
+    const data = Module.jsValueCache.get(jsRefId);
+
+    if (data) {
+        function luaError(s) {
+            Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, 'string', s, `<jserror>` ]);
+            return -1;
+        }
+
+        if (!data[Module.JS_VALUE]) {
+            Module.fprintwarn("illegal state: js callback on non js data");  
+            return 0;
+        };
+
+        if (data[Module.JS_VALUE].released) {
+            Module.fprintwarn("illegal state: lua write on released js data"); 
+            return 0;
+        };
+
+        if (typeof data[Module.JS_VALUE].value !== "object" || !(data[Module.JS_VALUE].value instanceof Map)) {
+            return luaError("attempt to modify a readonly table");
+        };
+
+        if (!data[Module.JS_VALUE].value.has(Module.JS_MUTABLE)) {
+            Module.fprintwarn("illegal state: lua write on non-mutable js data");
+            return luaError("attempt to modify a readonly table");
+        };
+
+        try {
+            const keyData = Module.luauToJsValue(L_ptr, key);
+            const valueData = Module.luauToJsValue(L_ptr, value);
+
+            data[Module.JS_VALUE].value.set(keyData, valueData);
+            return 0;
+        } catch (e) {
+            const errorStr = (e && e.toString) ? e.toString() : String(e);
+            return luaError(errorStr);
+        }
+    }
+
+    return 0;
+});
+
 // clang-format on
 
 bool isReferenceType(int kind)
@@ -646,7 +699,6 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         char buf[64];
         snprintf(buf, sizeof(buf), "%d", ref);
 
-
         return std::string("{\"type\":\"") + typeName + "\",\"value\":\"" + buf + "\"}";
     }
     default:
@@ -677,29 +729,81 @@ int proxy_index(lua_State* L)
 {
     const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
 
-    int keyType = lua_type(L, 2);
+    int keyType = lua_type(L, -1);
 
     if (isValueType(keyType) || isReferenceType(keyType))
     {
         int ref = LUA_REFNIL;
-        std::string luauKeyJson = serializeLuaValue(L, 2, &ref);
-        lua_unref(L, ref);
+        std::string luauKeyJson = serializeLuaValue(L, -1, &ref);
 
         int envId = getEnvId(L);
-
-        if (envId != -1)
-        {
-            return getJSProperty((int)L, envId, jsRefIdStr, luauKeyJson.c_str());
-        }
-        else
+        if (envId == -1)
         {
             fprinterr("illegal state: no environment id found for lua state");
+            lua_pop(L, 1);
             return 0;
         }
+
+        lua_pop(L, 1);
+        return getJSProperty((int)L, envId, jsRefIdStr, luauKeyJson.c_str());
     }
     else
     {
         fprintwarn("illegal type: unsupported key type '%s' for object '%s'", luauTypeName(keyType), jsRefIdStr);
+        lua_pop(L, 1);
+        return 0;
+    }
+}
+
+int proxy_newindex(lua_State* L)
+{
+    const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
+
+    int keyType = lua_type(L, -2);
+    int valueType = lua_type(L, -1);
+
+    if ((isValueType(keyType) || isReferenceType(keyType)) && (isValueType(valueType) || isReferenceType(valueType)))
+    {
+        int kref = LUA_REFNIL;
+        std::string luauKeyJson = serializeLuaValue(L, -2, &kref);
+        int vref = LUA_REFNIL;
+        std::string luauValueJson = serializeLuaValue(L, -1, &vref);
+
+        int envId = getEnvId(L);
+        if (envId == -1)
+        {
+            fprinterr("illegal state: no environment id found for lua state");
+            return 0;
+        }
+
+        int result = setJSProperty((int)L, envId, jsRefIdStr, luauKeyJson.c_str(), luauValueJson.c_str());
+        if (result == -1)
+        {
+            if (!lua_isstring(L, -1))
+            {
+                lua_pop(L, 1);
+                lua_pushstring(L, "No output from JS");
+            }
+
+            lua_error(L);
+            return 0;
+        }
+
+        lua_pop(L, 2);
+        return result;
+    }
+    else
+    {
+        if (!isValueType(keyType) && !isReferenceType(keyType))
+        {
+            fprintwarn("illegal type: unsupported key type '%s' for object '%s'", luauTypeName(keyType), jsRefIdStr);
+        }
+        if (!isValueType(valueType) && !isReferenceType(valueType))
+        {
+            fprintwarn("illegal type: unsupported value type '%s' for object '%s'", luauTypeName(valueType), jsRefIdStr);
+        }
+
+        lua_pop(L, 2);
         return 0;
     }
 }
@@ -818,6 +922,7 @@ int proxy_call(lua_State* L)
     {
         if (!lua_isstring(L, -1))
         {
+            lua_pop(L, 1);
             lua_pushstring(L, "No output from JS");
         }
 
@@ -862,6 +967,10 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         lua_pushstring(L, value);
         lua_pushcclosurek(L, proxy_index, lua_tostring(L, -1), 1, NULL);
         lua_setfield(L, -2, "__index");
+
+        lua_pushstring(L, value);
+        lua_pushcclosurek(L, proxy_newindex, lua_tostring(L, -1), 1, NULL);
+        lua_setfield(L, -2, "__newindex");
 
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
