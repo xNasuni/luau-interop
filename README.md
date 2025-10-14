@@ -11,25 +11,12 @@ This fork is designed to overhaul the interop you get while embedding Luau in a 
 
 Luau is an embeddable programming language, this fork rewrites the WASM execution API and actually implements interop allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.
 
-## Building Luau Interop (not Web/Node)
-```shell
-make
-```
-
-## Building Luau Interop for Web/Node
-
-> ### Linux / MacOS
-
-```shell
-emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target Luau.Web -j2
-```
-
-> ### Windows
-
-```bat
-emcmake cmake . -DLUAU_BUILD_WEB=ON
-cmake --build . --target Luau.Web --config Release -j2
+## Building Luau Interop
+```sh
+./build_linux.sh
+./build_macos.sh
+./build_web.sh
+./build_windows.sh
 ```
 
 ---
