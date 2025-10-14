@@ -429,7 +429,7 @@ EM_JS(void, ensureInterop, (), {
             type = "jfunction";
             value = Module.getPersistentRef(value, parent, key).toString();
         }
-        else if (typeof value == "object" || (Module.safeIn(Module.LUA_VALUE, value) || Module.safeIn(Module.JS_VALUE, value)))
+        else if (typeof value == "object" || (Module.safeIn(Module.LUA_VALUE, value) || Module.safeIn(Module.JS_VALUE, value)) || value instanceof Map)
         {
             if (Module.safeIn(Module.LUA_VALUE, value)) {
                 const data = value[Module.LUA_VALUE];
