@@ -6,7 +6,9 @@
 
 #include "EmitCommonX64.h"
 
-LUAU_FASTFLAG(LuauCodeGenRegAutoSpillA64)
+LUAU_FASTFLAG(LuauCodegenChainedSpills)
+LUAU_FASTFLAG(LuauCodegenSplitFloat)
+LUAU_FASTFLAGVARIABLE(LuauCodegenDwordSpillSlots)
 
 namespace Luau
 {
@@ -14,6 +16,9 @@ namespace CodeGen
 {
 namespace X64
 {
+
+static constexpr unsigned kValueDwordSize[] = {0, 0, 1, 1, 2, 1, 2, 4};
+static_assert(sizeof(kValueDwordSize) / sizeof(kValueDwordSize[0]) == size_t(IrValueKind::Count), "all kinds have to be covered");
 
 static const RegisterX64 kGprAllocOrder[] = {rax, rdx, rcx, rbx, rsi, rdi, r8, r9, r10, r11};
 
@@ -201,32 +206,61 @@ void IrRegAllocX64::preserve(IrInst& inst)
     spill.originalLoc = inst.regX64;
 
     // Loads from VmReg/VmConst don't have to be spilled, they can be restored from a register later
-    if (!hasRestoreOp(inst))
+    // When checking if value has a restore operation to spill it, we only allow it in the same block
+    if (FFlag::LuauCodegenChainedSpills ? !function.hasRestoreLocation(inst, /*limitToCurrentBlock*/ true) : !hasRestoreOp_DEPRECATED(inst))
     {
         unsigned i = findSpillStackSlot(spill.valueKind);
 
-        if (spill.valueKind == IrValueKind::Tvalue)
-            build.vmovups(xmmword[sSpillArea + i * 8], inst.regX64);
-        else if (spill.valueKind == IrValueKind::Double)
-            build.vmovsd(qword[sSpillArea + i * 8], inst.regX64);
-        else if (spill.valueKind == IrValueKind::Pointer)
-            build.mov(qword[sSpillArea + i * 8], inst.regX64);
-        else if (spill.valueKind == IrValueKind::Tag || spill.valueKind == IrValueKind::Int)
-            build.mov(dword[sSpillArea + i * 8], inst.regX64);
-        else
-            CODEGEN_ASSERT(!"Unsupported value kind");
-
-        usedSpillSlots.set(i);
-
-        if (i + 1 > maxUsedSlot)
-            maxUsedSlot = i + 1;
-
-        if (spill.valueKind == IrValueKind::Tvalue)
+        if (FFlag::LuauCodegenDwordSpillSlots)
         {
-            usedSpillSlots.set(i + 1);
+            if (spill.valueKind == IrValueKind::Tvalue)
+                build.vmovups(xmmword[sSpillArea + i * 4], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Double)
+                build.vmovsd(qword[sSpillArea + i * 4], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Pointer)
+                build.mov(qword[sSpillArea + i * 4], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Tag || spill.valueKind == IrValueKind::Int)
+                build.mov(dword[sSpillArea + i * 4], inst.regX64);
+            else if (FFlag::LuauCodegenSplitFloat && spill.valueKind == IrValueKind::Float)
+                build.vmovss(dword[sSpillArea + i * 4], inst.regX64);
+            else
+                CODEGEN_ASSERT(!"Unsupported value kind");
 
-            if (i + 2 > maxUsedSlot)
-                maxUsedSlot = i + 2;
+            unsigned end = i + kValueDwordSize[int(spill.valueKind)];
+
+            for (unsigned pos = i; pos < end; pos++)
+                usedSpillSlotHalfs.set(pos);
+
+            if ((end + 1) / 2 > maxUsedSlot)
+                maxUsedSlot = (end + 1) / 2;
+        }
+        else
+        {
+            if (spill.valueKind == IrValueKind::Tvalue)
+                build.vmovups(xmmword[sSpillArea + i * 8], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Double)
+                build.vmovsd(qword[sSpillArea + i * 8], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Pointer)
+                build.mov(qword[sSpillArea + i * 8], inst.regX64);
+            else if (spill.valueKind == IrValueKind::Tag || spill.valueKind == IrValueKind::Int)
+                build.mov(dword[sSpillArea + i * 8], inst.regX64);
+            else if (FFlag::LuauCodegenSplitFloat && spill.valueKind == IrValueKind::Float)
+                build.vmovss(dword[sSpillArea + i * 8], inst.regX64);
+            else
+                CODEGEN_ASSERT(!"Unsupported value kind");
+
+            usedSpillSlots_DEPRECATED.set(i);
+
+            if (i + 1 > maxUsedSlot)
+                maxUsedSlot = i + 1;
+
+            if (spill.valueKind == IrValueKind::Tvalue)
+            {
+                usedSpillSlots_DEPRECATED.set(i + 1);
+
+                if (i + 2 > maxUsedSlot)
+                    maxUsedSlot = i + 2;
+            }
         }
 
         spill.stackSlot = uint8_t(i);
@@ -258,32 +292,131 @@ void IrRegAllocX64::restore(IrInst& inst, bool intoOriginalLocation)
         if (spills[i].instIdx == instIdx)
         {
             RegisterX64 reg = intoOriginalLocation ? takeReg(spills[i].originalLoc, instIdx) : allocReg(spills[i].originalLoc.size, instIdx);
-            OperandX64 restoreLocation = noreg;
 
-            // Previous call might have relocated the spill vector, so this reference can't be taken earlier
-            const IrSpillX64& spill = spills[i];
-
-            if (spill.stackSlot != kNoStackSlot)
+            if (FFlag::LuauCodegenChainedSpills)
             {
-                restoreLocation = addr[sSpillArea + spill.stackSlot * 8];
-                restoreLocation.memSize = reg.size;
+                // When restoring the value, we allow cross-block restore because we have commited to the target location at spill time
+                ValueRestoreLocation restoreLocation = function.findRestoreLocation(inst, /*limitToCurrentBlock*/ false);
 
-                usedSpillSlots.set(spill.stackSlot, false);
+                OperandX64 restoreAddr = noreg;
+
+                // Previous call might have relocated the spill vector, so this reference can't be taken earlier
+                const IrSpillX64& spill = spills[i];
+
+                if (spill.stackSlot != kNoStackSlot)
+                {
+                    restoreAddr = FFlag::LuauCodegenDwordSpillSlots ? addr[sSpillArea + spill.stackSlot * 4] : addr[sSpillArea + spill.stackSlot * 8];
+                    restoreAddr.memSize = reg.size;
+
+                    if (FFlag::LuauCodegenSplitFloat)
+                    {
+                        if (spill.valueKind == IrValueKind::Double)
+                            restoreAddr.memSize = SizeX64::qword;
+                        else if (spill.valueKind == IrValueKind::Float)
+                            restoreAddr.memSize = SizeX64::dword;
+                    }
+
+                    if (FFlag::LuauCodegenDwordSpillSlots)
+                    {
+                        unsigned end = spill.stackSlot + kValueDwordSize[int(spill.valueKind)];
+
+                        for (unsigned pos = spill.stackSlot; pos < end; pos++)
+                            usedSpillSlotHalfs.set(pos, false);
+                    }
+                    else
+                    {
+                        usedSpillSlots_DEPRECATED.set(spill.stackSlot, false);
+
+                        if (spill.valueKind == IrValueKind::Tvalue)
+                            usedSpillSlots_DEPRECATED.set(spill.stackSlot + 1, false);
+                    }
+                }
+                else
+                {
+                    restoreAddr = getRestoreAddress(inst, restoreLocation);
+                }
 
                 if (spill.valueKind == IrValueKind::Tvalue)
-                    usedSpillSlots.set(spill.stackSlot + 1, false);
+                {
+                    build.vmovups(reg, restoreAddr);
+                }
+                else if (spill.valueKind == IrValueKind::Double)
+                {
+                    build.vmovsd(reg, restoreAddr);
+                }
+                else if (spill.valueKind == IrValueKind::Int && restoreLocation.kind == IrValueKind::Double)
+                {
+                    // Handle restore of an int/uint value from a location storing a double number
+                    if (restoreLocation.conversionCmd == IrCmd::INT_TO_NUM)
+                        build.vcvttsd2si(reg, restoreAddr);
+                    else if (restoreLocation.conversionCmd == IrCmd::UINT_TO_NUM)
+                        build.vcvttsd2si(qwordReg(reg), restoreAddr); // Note: we perform 'uint64_t = (long long)double' for consistency with C++ code
+                    else
+                        CODEGEN_ASSERT(!"re-materialization not supported for this conversion command");
+                }
+                else if (!FFlag::LuauCodegenSplitFloat)
+                {
+                    build.mov(reg, restoreAddr);
+                }
+                else if (spill.valueKind == IrValueKind::Tag || spill.valueKind == IrValueKind::Int || spill.valueKind == IrValueKind::Pointer)
+                {
+                    build.mov(reg, restoreAddr);
+                }
+                else if (spill.valueKind == IrValueKind::Float)
+                {
+                    build.vmovss(reg, restoreAddr);
+                }
+                else
+                {
+                    CODEGEN_ASSERT(!"value kind not supported for restore");
+                }
             }
             else
             {
-                restoreLocation = getRestoreAddress(inst, getRestoreOp(inst));
-            }
+                OperandX64 restoreLocation = noreg;
 
-            if (spill.valueKind == IrValueKind::Tvalue)
-                build.vmovups(reg, restoreLocation);
-            else if (spill.valueKind == IrValueKind::Double)
-                build.vmovsd(reg, restoreLocation);
-            else
-                build.mov(reg, restoreLocation);
+                // Previous call might have relocated the spill vector, so this reference can't be taken earlier
+                const IrSpillX64& spill = spills[i];
+
+                if (spill.stackSlot != kNoStackSlot)
+                {
+                    restoreLocation =
+                        FFlag::LuauCodegenDwordSpillSlots ? addr[sSpillArea + spill.stackSlot * 4] : addr[sSpillArea + spill.stackSlot * 8];
+                    restoreLocation.memSize = reg.size;
+
+                    if (FFlag::LuauCodegenDwordSpillSlots)
+                    {
+                        unsigned end = spill.stackSlot + kValueDwordSize[int(spill.valueKind)];
+
+                        for (unsigned pos = spill.stackSlot; pos < end; pos++)
+                            usedSpillSlotHalfs.set(pos, false);
+                    }
+                    else
+                    {
+                        usedSpillSlots_DEPRECATED.set(spill.stackSlot, false);
+
+                        if (spill.valueKind == IrValueKind::Tvalue)
+                            usedSpillSlots_DEPRECATED.set(spill.stackSlot + 1, false);
+                    }
+                }
+                else
+                {
+                    restoreLocation = getRestoreAddress_DEPRECATED(inst, getRestoreOp_DEPRECATED(inst));
+                }
+
+                if (spill.valueKind == IrValueKind::Tvalue)
+                    build.vmovups(reg, restoreLocation);
+                else if (spill.valueKind == IrValueKind::Double)
+                    build.vmovsd(reg, restoreLocation);
+                else if (!FFlag::LuauCodegenSplitFloat)
+                    build.mov(reg, restoreLocation);
+                else if (spill.valueKind == IrValueKind::Tag || spill.valueKind == IrValueKind::Int || spill.valueKind == IrValueKind::Pointer)
+                    build.mov(reg, restoreLocation);
+                else if (spill.valueKind == IrValueKind::Float)
+                    build.vmovss(reg, restoreLocation);
+                else
+                    CODEGEN_ASSERT(!"value kind not supported for restore");
+            }
 
             inst.regX64 = reg;
             inst.spilled = false;
@@ -329,44 +462,85 @@ bool IrRegAllocX64::shouldFreeGpr(RegisterX64 reg) const
 
 unsigned IrRegAllocX64::findSpillStackSlot(IrValueKind valueKind)
 {
-    // Find a free stack slot. Two consecutive slots might be required for 16 byte TValues, so '- 1' is used
-    for (unsigned i = 0; i < unsigned(usedSpillSlots.size() - 1); ++i)
+    if (FFlag::LuauCodegenDwordSpillSlots)
     {
-        if (usedSpillSlots.test(i))
-            continue;
-
-        if (valueKind == IrValueKind::Tvalue && usedSpillSlots.test(i + 1))
+        if (valueKind == IrValueKind::Float || valueKind == IrValueKind::Int)
         {
-            ++i; // No need to retest this double position
-            continue;
-        }
+            for (unsigned i = 0; i < unsigned(usedSpillSlotHalfs.size()); ++i)
+            {
+                if (usedSpillSlotHalfs.test(i))
+                    continue;
 
-        return i;
+                return i;
+            }
+        }
+        else
+        {
+            // Find a free stack slot. Four consecutive slots might be required for 16 byte TValues, so '- 3' is used
+            // For 8 and 16 byte types we search in steps of 2 to return slot indices aligned by 2
+            for (unsigned i = 0; i < unsigned(usedSpillSlotHalfs.size() - 3); i += 2)
+            {
+                if (usedSpillSlotHalfs.test(i) || usedSpillSlotHalfs.test(i + 1))
+                    continue;
+
+                if (valueKind == IrValueKind::Tvalue)
+                {
+                    if (usedSpillSlotHalfs.test(i + 2) || usedSpillSlotHalfs.test(i + 3))
+                    {
+                        i += 2; // No need to retest this double position
+                        continue;
+                    }
+                }
+
+                return i;
+            }
+        }
+    }
+    else
+    {
+        // Find a free stack slot. Two consecutive slots might be required for 16 byte TValues, so '- 1' is used
+        for (unsigned i = 0; i < unsigned(usedSpillSlots_DEPRECATED.size() - 1); ++i)
+        {
+            if (usedSpillSlots_DEPRECATED.test(i))
+                continue;
+
+            if (valueKind == IrValueKind::Tvalue && usedSpillSlots_DEPRECATED.test(i + 1))
+            {
+                ++i; // No need to retest this double position
+                continue;
+            }
+
+            return i;
+        }
     }
 
     CODEGEN_ASSERT(!"Nowhere to spill");
     return ~0u;
 }
 
-IrOp IrRegAllocX64::getRestoreOp(const IrInst& inst) const
+IrOp IrRegAllocX64::getRestoreOp_DEPRECATED(const IrInst& inst) const
 {
+    CODEGEN_ASSERT(!FFlag::LuauCodegenChainedSpills);
+
     // When restoring the value, we allow cross-block restore because we have commited to the target location at spill time
-    if (IrOp location = function.findRestoreOp(inst, /*limitToCurrentBlock*/ false);
+    if (IrOp location = function.findRestoreOp_DEPRECATED(inst, /*limitToCurrentBlock*/ false);
         location.kind == IrOpKind::VmReg || location.kind == IrOpKind::VmConst)
         return location;
 
     return IrOp();
 }
 
-bool IrRegAllocX64::hasRestoreOp(const IrInst& inst) const
+bool IrRegAllocX64::hasRestoreOp_DEPRECATED(const IrInst& inst) const
 {
+    CODEGEN_ASSERT(!FFlag::LuauCodegenChainedSpills);
+
     // When checking if value has a restore operation to spill it, we only allow it in the same block
-    IrOp location = function.findRestoreOp(inst, /*limitToCurrentBlock*/ true);
+    IrOp location = function.findRestoreOp_DEPRECATED(inst, /*limitToCurrentBlock*/ true);
 
     return location.kind == IrOpKind::VmReg || location.kind == IrOpKind::VmConst;
 }
 
-OperandX64 IrRegAllocX64::getRestoreAddress(const IrInst& inst, IrOp restoreOp)
+OperandX64 IrRegAllocX64::getRestoreAddress_DEPRECATED(const IrInst& inst, IrOp restoreOp)
 {
     CODEGEN_ASSERT(restoreOp.kind != IrOpKind::None);
 
@@ -374,6 +548,8 @@ OperandX64 IrRegAllocX64::getRestoreAddress(const IrInst& inst, IrOp restoreOp)
     {
     case IrValueKind::Unknown:
     case IrValueKind::None:
+    case IrValueKind::Float:
+    case IrValueKind::Count:
         CODEGEN_ASSERT(!"Invalid operand restore value kind");
         break;
     case IrValueKind::Tag:
@@ -393,13 +569,44 @@ OperandX64 IrRegAllocX64::getRestoreAddress(const IrInst& inst, IrOp restoreOp)
     return noreg;
 }
 
+OperandX64 IrRegAllocX64::getRestoreAddress(const IrInst& inst, ValueRestoreLocation restoreLocation)
+{
+    CODEGEN_ASSERT(FFlag::LuauCodegenChainedSpills);
+
+    IrOp op = restoreLocation.op;
+    CODEGEN_ASSERT(op.kind != IrOpKind::None);
+
+    [[maybe_unused]] IrValueKind instKind = getCmdValueKind(inst.cmd);
+
+    switch (restoreLocation.kind)
+    {
+    case IrValueKind::Unknown:
+    case IrValueKind::None:
+    case IrValueKind::Float:
+    case IrValueKind::Count:
+        CODEGEN_ASSERT(!"Invalid operand restore value kind");
+        break;
+    case IrValueKind::Tag:
+        return op.kind == IrOpKind::VmReg ? luauRegTag(vmRegOp(op)) : luauConstantTag(vmConstOp(op));
+    case IrValueKind::Int:
+        CODEGEN_ASSERT(op.kind == IrOpKind::VmReg);
+        return luauRegValueInt(vmRegOp(op));
+    case IrValueKind::Pointer:
+        return restoreLocation.op.kind == IrOpKind::VmReg ? luauRegValue(vmRegOp(op)) : luauConstantValue(vmConstOp(op));
+    case IrValueKind::Double:
+        return restoreLocation.op.kind == IrOpKind::VmReg ? luauRegValue(vmRegOp(op)) : luauConstantValue(vmConstOp(op));
+    case IrValueKind::Tvalue:
+        return restoreLocation.op.kind == IrOpKind::VmReg ? luauReg(vmRegOp(op)) : luauConstant(vmConstOp(op));
+    }
+
+    CODEGEN_ASSERT(!"Failed to find restore operand location");
+    return noreg;
+}
+
 uint32_t IrRegAllocX64::findInstructionWithFurthestNextUse(const std::array<uint32_t, 16>& regInstUsers) const
 {
-    if (FFlag::LuauCodeGenRegAutoSpillA64)
-    {
-        if (currInstIdx == kInvalidInstIdx)
-            return kInvalidInstIdx;
-    }
+    if (currInstIdx == kInvalidInstIdx)
+        return kInvalidInstIdx;
 
     uint32_t furthestUseTarget = kInvalidInstIdx;
     uint32_t furthestUseLocation = 0;

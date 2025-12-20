@@ -3,6 +3,7 @@
 #include "Luau/TypeFunctionRuntime.h"
 
 #include "Luau/Allocator.h"
+#include "Luau/Common.h"
 #include "Luau/Lexer.h"
 #include "Luau/BuiltinTypeFunctions.h"
 #include "Luau/BytecodeBuilder.h"
@@ -10,6 +11,7 @@
 #include "Luau/Compiler.h"
 #include "Luau/DenseHash.h"
 #include "Luau/StringUtils.h"
+#include "Luau/Type.h"
 #include "Luau/TypeFunction.h"
 #include "Luau/TypeFunctionRuntimeBuilder.h"
 
@@ -21,6 +23,8 @@
 #include <vector>
 
 LUAU_DYNAMIC_FASTINT(LuauTypeFunctionSerdeIterationLimit)
+
+LUAU_FASTFLAGVARIABLE(LuauUnionofIntersectionofFlattens)
 
 namespace Luau
 {
@@ -213,6 +217,16 @@ TypeFunctionTypePackVar* allocateTypeFunctionTypePack(lua_State* L, TypeFunction
     return ctx->typePackArena.allocate(std::move(type));
 }
 
+void pushType(lua_State* L, TypeFunctionTypeId type)
+{
+    TypeFunctionTypeId* ptr = static_cast<TypeFunctionTypeId*>(lua_newuserdatatagged(L, sizeof(TypeFunctionTypeId), kTypeUserdataTag));
+    *ptr = type;
+
+    // set the new userdata's metatable to type metatable
+    luaL_getmetatable(L, "type");
+    lua_setmetatable(L, -2);
+}
+
 // Pushes a new type userdata onto the stack
 void allocTypeUserData(lua_State* L, TypeFunctionTypeVariant type)
 {
@@ -275,7 +289,7 @@ static std::string getTag(lua_State* L, TypeFunctionTypeId ty)
         return "never";
     else if (get<TypeFunctionAnyType>(ty))
         return "any";
-    else if (auto s = get<TypeFunctionSingletonType>(ty))
+    else if (get<TypeFunctionSingletonType>(ty))
         return "singleton";
     else if (get<TypeFunctionNegationType>(ty))
         return "negation";
@@ -484,16 +498,42 @@ static int createUnion(lua_State* L)
 {
     // get the number of arguments for union
     int argSize = lua_gettop(L);
-    if (argSize < 2)
+    if (!FFlag::LuauUnionofIntersectionofFlattens && argSize < 2)
         luaL_error(L, "types.unionof: expected at least 2 types to union, but got %d", argSize);
 
     std::vector<TypeFunctionTypeId> components;
     components.reserve(argSize);
 
     for (int i = 1; i <= argSize; i++)
-        components.push_back(getTypeUserData(L, i));
+    {
+        if (FFlag::LuauUnionofIntersectionofFlattens)
+        {
+            TypeFunctionTypeId component = getTypeUserData(L, i);
 
-    allocTypeUserData(L, TypeFunctionUnionType{std::move(components)});
+            if (auto unionComponent = get<TypeFunctionUnionType>(component))
+                components.insert(components.end(), unionComponent->components.begin(), unionComponent->components.end());
+            else if (get<TypeFunctionNeverType>(component))
+                continue;
+            else
+                components.push_back(component);
+        }
+        else
+        {
+            components.push_back(getTypeUserData(L, i));
+        }
+    }
+    
+    if (FFlag::LuauUnionofIntersectionofFlattens)
+    {
+        if (components.size() == 0)
+            allocTypeUserData(L, TypeFunctionNeverType{});
+        else if (components.size() == 1)
+            pushType(L, components[0]);
+        else
+            allocTypeUserData(L, TypeFunctionUnionType{std::move(components)});
+    }
+    else
+        allocTypeUserData(L, TypeFunctionUnionType{std::move(components)});
 
     return 1;
 }
@@ -504,16 +544,42 @@ static int createIntersection(lua_State* L)
 {
     // get the number of arguments for intersection
     int argSize = lua_gettop(L);
-    if (argSize < 2)
+    if (!FFlag::LuauUnionofIntersectionofFlattens && argSize < 2)
         luaL_error(L, "types.intersectionof: expected at least 2 types to intersection, but got %d", argSize);
 
     std::vector<TypeFunctionTypeId> components;
     components.reserve(argSize);
 
     for (int i = 1; i <= argSize; i++)
-        components.push_back(getTypeUserData(L, i));
+    {
+        if (FFlag::LuauUnionofIntersectionofFlattens)
+        {
+            TypeFunctionTypeId component = getTypeUserData(L, i);
 
-    allocTypeUserData(L, TypeFunctionIntersectionType{std::move(components)});
+            if (auto intersectionComponent = get<TypeFunctionIntersectionType>(component))
+                components.insert(components.end(), intersectionComponent->components.begin(), intersectionComponent->components.end());
+            else if (get<TypeFunctionUnknownType>(component))
+                continue;
+            else
+                components.push_back(component);
+        }
+        else
+        {
+            components.push_back(getTypeUserData(L, i));
+        }
+    }
+    
+    if (FFlag::LuauUnionofIntersectionofFlattens)
+    {
+        if (components.size() == 0)
+            allocTypeUserData(L, TypeFunctionUnknownType{});
+        else if (components.size() == 1)
+            pushType(L, components[0]);
+        else
+            allocTypeUserData(L, TypeFunctionIntersectionType{std::move(components)});
+    }
+    else
+        allocTypeUserData(L, TypeFunctionIntersectionType{std::move(components)});
 
     return 1;
 }
@@ -893,7 +959,7 @@ static int setTableIndexer(lua_State* L)
     TypeFunctionTypeId key = getTypeUserData(L, 2);
     TypeFunctionTypeId value = getTypeUserData(L, 3);
 
-    if (auto tfnt = get<TypeFunctionNeverType>(key))
+    if (get<TypeFunctionNeverType>(key))
     {
         tftt->indexer = std::nullopt;
         return 0;
@@ -2373,11 +2439,11 @@ private:
                 break;
             }
         }
-        else if (auto u = get<TypeFunctionUnknownType>(ty))
+        else if (get<TypeFunctionUnknownType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionUnknownType{});
-        else if (auto a = get<TypeFunctionNeverType>(ty))
+        else if (get<TypeFunctionNeverType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionNeverType{});
-        else if (auto a = get<TypeFunctionAnyType>(ty))
+        else if (get<TypeFunctionAnyType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionAnyType{});
         else if (auto s = get<TypeFunctionSingletonType>(ty))
         {
@@ -2386,20 +2452,20 @@ private:
             else if (auto ss = get<TypeFunctionStringSingleton>(s))
                 target = typeFunctionRuntime->typeArena.allocate(TypeFunctionSingletonType{TypeFunctionStringSingleton{ss->value}});
         }
-        else if (auto u = get<TypeFunctionUnionType>(ty))
+        else if (get<TypeFunctionUnionType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionUnionType{{}});
-        else if (auto i = get<TypeFunctionIntersectionType>(ty))
+        else if (get<TypeFunctionIntersectionType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionIntersectionType{{}});
-        else if (auto n = get<TypeFunctionNegationType>(ty))
+        else if (get<TypeFunctionNegationType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionNegationType{{}});
-        else if (auto t = get<TypeFunctionTableType>(ty))
+        else if (get<TypeFunctionTableType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionTableType{{}, std::nullopt, std::nullopt});
-        else if (auto f = get<TypeFunctionFunctionType>(ty))
+        else if (get<TypeFunctionFunctionType>(ty))
         {
             TypeFunctionTypePackId emptyTypePack = typeFunctionRuntime->typePackArena.allocate(TypeFunctionTypePack{});
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionFunctionType{{}, {}, emptyTypePack, emptyTypePack});
         }
-        else if (auto c = get<TypeFunctionExternType>(ty))
+        else if (get<TypeFunctionExternType>(ty))
             target = ty; // Don't copy a class since they are immutable
         else if (auto g = get<TypeFunctionGenericType>(ty))
             target = typeFunctionRuntime->typeArena.allocate(TypeFunctionGenericType{g->isNamed, g->isPack, g->name});
@@ -2418,9 +2484,9 @@ private:
 
         // Create a shallow serialization
         TypeFunctionTypePackId target = {};
-        if (auto tPack = get<TypeFunctionTypePack>(tp))
+        if (get<TypeFunctionTypePack>(tp))
             target = typeFunctionRuntime->typePackArena.allocate(TypeFunctionTypePack{{}});
-        else if (auto vPack = get<TypeFunctionVariadicTypePack>(tp))
+        else if (get<TypeFunctionVariadicTypePack>(tp))
             target = typeFunctionRuntime->typePackArena.allocate(TypeFunctionVariadicTypePack{});
         else if (auto gPack = get<TypeFunctionGenericTypePack>(tp))
             target = typeFunctionRuntime->typePackArena.allocate(TypeFunctionGenericTypePack{gPack->isNamed, gPack->name});

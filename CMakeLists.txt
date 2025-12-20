@@ -29,6 +29,7 @@ else()
 endif()
 
 project(Luau LANGUAGES CXX C)
+<<<<<<< HEAD
 add_library(Luau.Common INTERFACE)
 add_library(Luau.CLI.lib ${LUAU_LIB_TYPE})
 add_library(Luau.Ast ${LUAU_LIB_TYPE})
@@ -41,6 +42,18 @@ add_library(Luau.VM ${LUAU_LIB_TYPE})
 add_library(Luau.Require ${LUAU_LIB_TYPE})
 add_library(Luau.RequireNavigator ${LUAU_LIB_TYPE})
 add_library(isocline ${LUAU_LIB_TYPE})
+=======
+add_library(Luau.Common STATIC)
+add_library(Luau.CLI.lib STATIC)
+add_library(Luau.Ast STATIC)
+add_library(Luau.Compiler STATIC)
+add_library(Luau.Config STATIC)
+add_library(Luau.Analysis STATIC)
+add_library(Luau.CodeGen STATIC)
+add_library(Luau.VM STATIC)
+add_library(Luau.Require STATIC)
+add_library(isocline STATIC)
+>>>>>>> upstream/master
 
 if(LUAU_BUILD_CLI)
     add_executable(Luau.Repl.CLI)
@@ -74,7 +87,8 @@ add_library(Luau.VM.Internals INTERFACE)
 
 include(Sources.cmake)
 
-target_include_directories(Luau.Common INTERFACE Common/include)
+target_compile_features(Luau.Common PUBLIC cxx_std_17)
+target_include_directories(Luau.Common PUBLIC Common/include)
 
 target_compile_features(Luau.CLI.lib PUBLIC cxx_std_17)
 target_include_directories(Luau.CLI.lib PUBLIC CLI/include)
@@ -91,15 +105,12 @@ target_link_libraries(Luau.Compiler PUBLIC Luau.Ast)
 target_compile_features(Luau.Config PUBLIC cxx_std_17)
 target_include_directories(Luau.Config PUBLIC Config/include)
 target_link_libraries(Luau.Config PUBLIC Luau.Ast)
+target_link_libraries(Luau.Config PRIVATE Luau.Compiler Luau.VM)
 
 target_compile_features(Luau.Analysis PUBLIC cxx_std_17)
 target_include_directories(Luau.Analysis PUBLIC Analysis/include)
-target_link_libraries(Luau.Analysis PUBLIC Luau.Ast Luau.EqSat Luau.Config)
+target_link_libraries(Luau.Analysis PUBLIC Luau.Ast Luau.Config)
 target_link_libraries(Luau.Analysis PRIVATE Luau.Compiler Luau.VM)
-
-target_compile_features(Luau.EqSat PUBLIC cxx_std_17)
-target_include_directories(Luau.EqSat PUBLIC EqSat/include)
-target_link_libraries(Luau.EqSat PUBLIC Luau.Common)
 
 target_compile_features(Luau.CodeGen PRIVATE cxx_std_17)
 target_include_directories(Luau.CodeGen PUBLIC CodeGen/include)
@@ -111,13 +122,8 @@ target_include_directories(Luau.VM PUBLIC VM/include)
 target_link_libraries(Luau.VM PUBLIC Luau.Common)
 
 target_compile_features(Luau.Require PUBLIC cxx_std_17)
-target_include_directories(Luau.Require PUBLIC Require/Runtime/include)
-target_link_libraries(Luau.Require PUBLIC Luau.VM)
-target_link_libraries(Luau.Require PRIVATE Luau.RequireNavigator)
-
-target_compile_features(Luau.RequireNavigator PUBLIC cxx_std_17)
-target_include_directories(Luau.RequireNavigator PUBLIC Require/Navigator/include)
-target_link_libraries(Luau.RequireNavigator PUBLIC Luau.Config)
+target_include_directories(Luau.Require PUBLIC Require/include)
+target_link_libraries(Luau.Require PUBLIC Luau.Config Luau.VM)
 
 target_include_directories(isocline PUBLIC extern/isocline/include)
 
@@ -169,7 +175,6 @@ endif()
 
 target_compile_options(Luau.Ast PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.Analysis PRIVATE ${LUAU_OPTIONS})
-target_compile_options(Luau.EqSat PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.CLI.lib PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.CodeGen PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.VM PRIVATE ${LUAU_OPTIONS})
@@ -242,7 +247,7 @@ if(LUAU_BUILD_CLI)
     target_link_libraries(Luau.Compile.CLI PRIVATE osthreads)
     target_link_libraries(Luau.Bytecode.CLI PRIVATE osthreads)
 
-    target_link_libraries(Luau.Analyze.CLI PRIVATE Luau.Analysis Luau.CLI.lib Luau.RequireNavigator)
+    target_link_libraries(Luau.Analyze.CLI PRIVATE Luau.Analysis Luau.CLI.lib Luau.Require)
 
     target_link_libraries(Luau.Ast.CLI PRIVATE Luau.Ast Luau.Analysis Luau.CLI.lib)
 
@@ -281,8 +286,13 @@ if(LUAU_BUILD_TESTS)
 endif()
 
 if(LUAU_BUILD_WEB)
+<<<<<<< HEAD
     target_compile_options(Luau.Web PRIVATE ${LUAU_OPTIONS} -D__EMSCRIPTEN__)
     target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM)
+=======
+    target_compile_options(Luau.Web PRIVATE ${LUAU_OPTIONS})
+    target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
+>>>>>>> upstream/master
 
     # add internal Luau headers
     target_include_directories(Luau.Web PRIVATE
@@ -290,7 +300,11 @@ if(LUAU_BUILD_WEB)
     )
 
     # declare exported functions to emscripten
+<<<<<<< HEAD
     target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
+=======
+    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=["_executeScript","_checkScript"] -sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"])
+>>>>>>> upstream/master
 
     # add -fexceptions for emscripten to allow exceptions to be caught in C++
     target_link_options(Luau.Web PRIVATE -fexceptions)
@@ -300,13 +314,13 @@ if(LUAU_BUILD_WEB)
 endif()
 
 # validate dependencies for internal libraries
-foreach(LIB Luau.Ast Luau.Compiler Luau.Config Luau.Analysis Luau.EqSat Luau.CodeGen Luau.VM)
+foreach(LIB Luau.Ast Luau.Compiler Luau.Config Luau.Analysis Luau.CodeGen Luau.VM)
     if(TARGET ${LIB})
         get_target_property(DEPENDS ${LIB} LINK_LIBRARIES)
         if(LIB MATCHES "CodeGen|VM" AND DEPENDS MATCHES "Ast|Analysis|Config|Compiler")
             message(FATAL_ERROR ${LIB} " is a runtime component but it depends on one of the offline components")
         endif()
-        if(LIB MATCHES "Ast|EqSat|Compiler" AND DEPENDS MATCHES "CodeGen|VM")
+        if(LIB MATCHES "Ast|Compiler" AND DEPENDS MATCHES "CodeGen|VM")
             message(FATAL_ERROR ${LIB} " is an offline component but it depends on one of the runtime components")
         endif()
         if(LIB MATCHES "Ast|Compiler" AND DEPENDS MATCHES "Analysis|Config")

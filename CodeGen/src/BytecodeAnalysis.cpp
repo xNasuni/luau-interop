@@ -10,6 +10,8 @@
 
 #include <algorithm>
 
+LUAU_FASTFLAG(LuauCodegenSetBlockEntryState)
+
 namespace Luau
 {
 namespace CodeGen
@@ -106,6 +108,10 @@ void loadBytecodeTypeInfo(IrFunction& function)
             info.endpc = info.startpc + readVarInt(data, offset);
         }
     }
+
+    // Preserve original information
+    if (FFlag::LuauCodegenSetBlockEntryState)
+        function.bcOriginalTypeInfo = function.bcTypeInfo;
 
     CODEGEN_ASSERT(offset == size_t(proto->sizetypeinfo));
 }
@@ -559,6 +565,18 @@ static void applyBuiltinCall(LuauBuiltinFunction bfid, BytecodeTypes& types)
         types.a = LBC_TYPE_NUMBER;
         types.b = LBC_TYPE_NUMBER;
         types.c = LBC_TYPE_NUMBER;
+        break;
+    case LBF_MATH_ISNAN:
+        types.result = LBC_TYPE_BOOLEAN;
+        types.a = LBC_TYPE_NUMBER;
+        break;
+    case LBF_MATH_ISINF:
+        types.result = LBC_TYPE_BOOLEAN;
+        types.a = LBC_TYPE_NUMBER;
+        break;
+    case LBF_MATH_ISFINITE:
+        types.result = LBC_TYPE_BOOLEAN;
+        types.a = LBC_TYPE_NUMBER;
         break;
     }
 }

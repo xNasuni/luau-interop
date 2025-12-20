@@ -4,7 +4,7 @@
 #include "Luau/Common.h"
 #include "Luau/IrData.h"
 
-LUAU_FASTFLAG(LuauCodegenDirectCompare2)
+LUAU_FASTFLAG(LuauCodegenUpvalueLoadProp)
 
 namespace Luau
 {
@@ -40,16 +40,14 @@ static void visitVmRegDefsUses(T& visitor, IrFunction& function, const IrInst& i
         visitor.use(inst.b);
         break;
     case IrCmd::CMP_TAG:
-        if (FFlag::LuauCodegenDirectCompare2)
-            visitor.maybeUse(inst.a);
+        visitor.maybeUse(inst.a);
         break;
     case IrCmd::JUMP_IF_TRUTHY:
     case IrCmd::JUMP_IF_FALSY:
         visitor.use(inst.a);
         break;
     case IrCmd::JUMP_EQ_TAG:
-        if (FFlag::LuauCodegenDirectCompare2)
-            visitor.maybeUse(inst.a);
+        visitor.maybeUse(inst.a);
         break;
         // A <- B, C
     case IrCmd::DO_ARITH:
@@ -84,10 +82,12 @@ static void visitVmRegDefsUses(T& visitor, IrFunction& function, const IrInst& i
         visitor.defRange(vmRegOp(inst.a), function.uintOp(inst.b));
         break;
     case IrCmd::GET_UPVALUE:
-        visitor.def(inst.a);
+        if (!FFlag::LuauCodegenUpvalueLoadProp)
+            visitor.def(inst.a);
         break;
     case IrCmd::SET_UPVALUE:
-        visitor.use(inst.b);
+        if (!FFlag::LuauCodegenUpvalueLoadProp)
+            visitor.use(inst.b);
         break;
     case IrCmd::INTERRUPT:
         break;

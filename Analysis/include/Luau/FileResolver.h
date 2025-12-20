@@ -1,6 +1,8 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
+#include "Luau/TypeCheckLimits.h"
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,6 +36,17 @@ struct ModuleInfo
 
 struct RequireAlias
 {
+    explicit RequireAlias(std::string alias)
+        : alias(std::move(alias))
+    {
+    }
+
+    explicit RequireAlias(std::string alias, std::vector<std::string> tags)
+        : alias(std::move(alias))
+        , tags(std::move(tags))
+    {
+    }
+
     std::string alias; // Unprefixed alias name (no leading `@`).
     std::vector<std::string> tags = {};
 };
@@ -101,7 +114,7 @@ struct FileResolver
 
     virtual std::optional<SourceCode> readSource(const ModuleName& name) = 0;
 
-    virtual std::optional<ModuleInfo> resolveModule(const ModuleInfo* context, AstExpr* expr)
+    virtual std::optional<ModuleInfo> resolveModule(const ModuleInfo* context, AstExpr* expr, const TypeCheckLimits& limits)
     {
         return std::nullopt;
     }

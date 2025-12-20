@@ -13,11 +13,6 @@
 #include <algorithm>
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAGVARIABLE(LuauTidyTypeUtils)
-LUAU_FASTFLAG(LuauEmplaceNotPushBack)
-LUAU_FASTFLAGVARIABLE(LuauVariadicAnyPackShouldBeErrorSuppressing)
-LUAU_FASTFLAG(LuauPushTypeConstraint2)
-LUAU_FASTFLAG(LuauFilterOverloadsByArity)
 
 namespace Luau
 {
@@ -101,10 +96,8 @@ std::optional<Property> findTableProperty(NotNull<BuiltinTypes> builtinTypes, Er
         }
         else if (get<AnyType>(index))
             return builtinTypes->anyType;
-        else if (FFlag::LuauEmplaceNotPushBack)
-            errors.emplace_back(location, GenericError{"__index should either be a function or table. Got " + toString(index)});
         else
-            errors.push_back(TypeError{location, GenericError{"__index should either be a function or table. Got " + toString(index)}});
+            errors.emplace_back(location, GenericError{"__index should either be a function or table. Got " + toString(index)});
 
         mtIndex = findMetatableEntry(builtinTypes, errors, *mtIndex, "__index", location);
     }
@@ -134,25 +127,17 @@ std::optional<TypeId> findMetatableEntry(
     const TableType* mtt = getTableType(unwrapped);
     if (!mtt)
     {
-        if (FFlag::LuauEmplaceNotPushBack)
-            errors.emplace_back(location, GenericError{"Metatable was not a table"});
-        else
-            errors.push_back(TypeError{location, GenericError{"Metatable was not a table"}});
+        errors.emplace_back(location, GenericError{"Metatable was not a table"});
         return std::nullopt;
     }
 
     auto it = mtt->props.find(entry);
     if (it != mtt->props.end())
     {
-        if (FFlag::LuauTidyTypeUtils || FFlag::LuauSolverV2)
-        {
-            if (it->second.readTy)
-                return it->second.readTy;
-            else
-                return it->second.writeTy;
-        }
+        if (it->second.readTy)
+            return it->second.readTy;
         else
-            return it->second.type_DEPRECATED();
+            return it->second.writeTy;
     }
     else
         return std::nullopt;
@@ -186,18 +171,13 @@ std::optional<TypeId> findTablePropertyRespectingMeta(
         const auto& it = tableType->props.find(name);
         if (it != tableType->props.end())
         {
-            if (FFlag::LuauTidyTypeUtils || FFlag::LuauSolverV2)
+            switch (context)
             {
-                switch (context)
-                {
-                case ValueContext::RValue:
-                    return it->second.readTy;
-                case ValueContext::LValue:
-                    return it->second.writeTy;
-                }
+            case ValueContext::RValue:
+                return it->second.readTy;
+            case ValueContext::LValue:
+                return it->second.writeTy;
             }
-            else
-                return it->second.type_DEPRECATED();
         }
     }
 
@@ -241,10 +221,8 @@ std::optional<TypeId> findTablePropertyRespectingMeta(
         }
         else if (get<AnyType>(index))
             return builtinTypes->anyType;
-        else if (FFlag::LuauEmplaceNotPushBack)
-            errors.emplace_back(location, GenericError{"__index should either be a function or table. Got " + toString(index)});
         else
-            errors.push_back(TypeError{location, GenericError{"__index should either be a function or table. Got " + toString(index)}});
+            errors.emplace_back(location, GenericError{"__index should either be a function or table. Got " + toString(index)});
 
         mtIndex = findMetatableEntry(builtinTypes, errors, *mtIndex, "__index", location);
     }
@@ -350,11 +328,9 @@ TypePack extendTypePack(
             TypePack newPack;
             newPack.tail = arena.freshTypePack(ftp->scope, ftp->polarity);
 
-            if (FFlag::LuauTidyTypeUtils)
-                trackInteriorFreeTypePack(ftp->scope, *newPack.tail);
+            trackInteriorFreeTypePack(ftp->scope, *newPack.tail);
 
-            if (FFlag::LuauTidyTypeUtils || FFlag::LuauSolverV2)
-                result.tail = newPack.tail;
+            result.tail = newPack.tail;
             size_t overridesIndex = 0;
             while (result.head.size() < length)
             {
@@ -365,14 +341,9 @@ TypePack extendTypePack(
                 }
                 else
                 {
-                    if (FFlag::LuauTidyTypeUtils || FFlag::LuauSolverV2)
-                    {
-                        FreeType ft{ftp->scope, builtinTypes->neverType, builtinTypes->unknownType, ftp->polarity};
-                        t = arena.addType(ft);
-                        trackInteriorFreeType(ftp->scope, t);
-                    }
-                    else
-                        t = arena.freshType(builtinTypes, ftp->scope);
+                    FreeType ft{ftp->scope, builtinTypes->neverType, builtinTypes->unknownType, ftp->polarity};
+                    t = arena.addType(ft);
+                    trackInteriorFreeType(ftp->scope, t);
                 }
 
                 newPack.head.push_back(t);
@@ -384,7 +355,7 @@ TypePack extendTypePack(
 
             return result;
         }
-        else if (auto etp = getMutable<ErrorTypePack>(pack))
+        else if (getMutable<ErrorTypePack>(pack))
         {
             while (result.head.size() < length)
                 result.head.push_back(builtinTypes->errorType);
@@ -507,13 +478,10 @@ ErrorSuppression shouldSuppressErrors(NotNull<Normalizer> normalizer, TypePackId
 {
     // Flatten t where t = ...any will produce a type pack [ {}, t]
     // which trivially fails the tail check below, which is why we need to special case here
-    if (FFlag::LuauVariadicAnyPackShouldBeErrorSuppressing)
+    if (auto tpId = get<VariadicTypePack>(follow(tp)))
     {
-        if (auto tpId = get<VariadicTypePack>(follow(tp)))
-        {
-            if (get<AnyType>(follow(tpId->ty)))
-                return ErrorSuppression::Suppress;
-        }
+        if (get<AnyType>(follow(tpId->ty)))
+            return ErrorSuppression::Suppress;
     }
 
     auto [tys, tail] = flatten(tp);
@@ -715,7 +683,7 @@ std::optional<TypeId> extractMatchingTableType(std::vector<TypeId>& tables, Type
                     }
                 }
 
-                if (FFlag::LuauPushTypeConstraint2 && fastIsSubtype(propType, expectedType))
+                if (fastIsSubtype(propType, expectedType))
                     return ty;
             }
         }
@@ -750,8 +718,6 @@ AstExpr* unwrapGroup(AstExpr* expr)
 
 bool isOptionalType(TypeId ty, NotNull<BuiltinTypes> builtinTypes)
 {
-    LUAU_ASSERT(FFlag::LuauFilterOverloadsByArity);
-
     ty = follow(ty);
 
     if (ty == builtinTypes->nilType || ty == builtinTypes->anyType || ty == builtinTypes->unknownType)
@@ -928,7 +894,35 @@ TypeId addUnion(NotNull<TypeArena> arena, NotNull<BuiltinTypes> builtinTypes, st
     return ub.build();
 }
 
+ContainsAnyGeneric::ContainsAnyGeneric()
+    : TypeOnceVisitor("ContainsAnyGeneric", /* skipBoundTypes */ true)
+{
+}
+bool ContainsAnyGeneric::visit(TypeId ty)
+{
+    found = found || is<GenericType>(ty);
+    return !found;
+}
 
+bool ContainsAnyGeneric::visit(TypePackId ty)
+{
+    found = found || is<GenericTypePack>(follow(ty));
+    return !found;
+}
+
+bool ContainsAnyGeneric::hasAnyGeneric(TypeId ty)
+{
+    ContainsAnyGeneric cg;
+    cg.traverse(ty);
+    return cg.found;
+}
+
+bool ContainsAnyGeneric::hasAnyGeneric(TypePackId tp)
+{
+    ContainsAnyGeneric cg;
+    cg.traverse(tp);
+    return cg.found;
+}
 
 
 } // namespace Luau

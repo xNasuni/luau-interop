@@ -10,16 +10,12 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauTableCloneClonesType3)
+LUAU_FASTFLAG(LuauTableCloneClonesType4)
 LUAU_FASTFLAG(LuauNoScopeShallNotSubsumeAll)
-LUAU_FASTFLAG(LuauSubtypingPrimitiveAndGenericTableTypes)
-LUAU_FASTFLAG(LuauUnifyShortcircuitSomeIntersectionsAndUnions)
-LUAU_FASTFLAG(LuauFilterOverloadsByArity)
-LUAU_FASTFLAG(LuauSubtypingReportGenericBoundMismatches2)
-LUAU_FASTFLAG(LuauSubtypingGenericsDoesntUseVariance)
-LUAU_FASTFLAG(LuauVectorLerp)
-LUAU_FASTFLAG(LuauCompileVectorLerp)
-LUAU_FASTFLAG(LuauTypeCheckerVectorLerp2)
+LUAU_FASTFLAG(LuauUnknownGlobalFixSuggestion)
+LUAU_FASTFLAG(LuauNewOverloadResolver2)
+LUAU_FASTFLAG(LuauBetterTypeMismatchErrors)
+LUAU_FASTFLAG(LuauCloneForIntersectionsUnions)
 
 TEST_SUITE_BEGIN("BuiltinTests");
 
@@ -153,19 +149,32 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "sort_with_bad_predicate")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    const std::string expected = "Type\n\t"
-                                 "'(number, number) -> boolean'"
-                                 "\ncould not be converted into\n\t"
-                                 "'((string, string) -> boolean)?'"
-                                 "\ncaused by:\n"
-                                 "  None of the union options are compatible. For example:\n"
-                                 "Type\n\t"
-                                 "'(number, number) -> boolean'"
-                                 "\ncould not be converted into\n\t"
-                                 "'(string, string) -> boolean'"
-                                 "\ncaused by:\n"
-                                 "  Argument #1 type is not compatible.\n"
-                                 "Type 'string' could not be converted into 'number'";
+    const std::string expected = FFlag::LuauBetterTypeMismatchErrors ? "Expected this to be\n\t"
+                                                                       "'((string, string) -> boolean)?'"
+                                                                       "\nbut got\n\t"
+                                                                       "'(number, number) -> boolean'"
+                                                                       "\ncaused by:\n"
+                                                                       "  None of the union options are compatible. For example:\n"
+                                                                       "Expected this to be\n\t"
+                                                                       "'(string, string) -> boolean'"
+                                                                       "\nbut got\n\t"
+                                                                       "'(number, number) -> boolean'"
+                                                                       "\ncaused by:\n"
+                                                                       "  Argument #1 type is not compatible.\n"
+                                                                       "Expected this to be 'number', but got 'string'"
+                                                                     : "Type\n\t"
+                                                                       "'(number, number) -> boolean'"
+                                                                       "\ncould not be converted into\n\t"
+                                                                       "'((string, string) -> boolean)?'"
+                                                                       "\ncaused by:\n"
+                                                                       "  None of the union options are compatible. For example:\n"
+                                                                       "Type\n\t"
+                                                                       "'(number, number) -> boolean'"
+                                                                       "\ncould not be converted into\n\t"
+                                                                       "'(string, string) -> boolean'"
+                                                                       "\ncaused by:\n"
+                                                                       "  Argument #1 type is not compatible.\n"
+                                                                       "Type 'string' could not be converted into 'number'";
     CHECK_EQ(expected, toString(result.errors[0]));
 }
 
@@ -196,7 +205,10 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "math_max_checks_for_numbers")
     )");
 
     LUAU_REQUIRE_ERRORS(result);
-    CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
+    if (FFlag::LuauBetterTypeMismatchErrors)
+        CHECK_EQ("Expected this to be 'number', but got 'string'", toString(result.errors[0]));
+    else
+        CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "builtin_tables_sealed")
@@ -704,7 +716,22 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "bad_select_should_not_crash")
         end
     )");
 
-    if (FFlag::LuauSolverV2)
+    if (FFlag::LuauNewOverloadResolver2 && FFlag::LuauSolverV2)
+    {
+        // Note, the function "_" places no constraints on its arguments.  They
+        // can therefore be nil.  They are therefore optional.  Only the
+        // select() call is invalid here.
+        LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+        CHECK(Location{{6, 17}, {6, 23}} == result.errors.at(0).location);
+        const CountMismatch* err = get<CountMismatch>(result.errors.at(0));
+        REQUIRE(err);
+        CHECK(1 == err->expected);
+
+        // "_" returns 0 values.
+        CHECK(0 == err->actual);
+    }
+    else if (FFlag::LuauSolverV2)
     {
         LUAU_REQUIRE_ERROR_COUNT(2, result);
         CHECK_EQ("Argument count mismatch. Function expects at least 1 argument, but none are specified", toString(result.errors[0]));
@@ -832,8 +859,17 @@ TEST_CASE_FIXTURE(Fixture, "string_format_use_correct_argument2")
 
     LUAU_REQUIRE_ERROR_COUNT(2, result);
 
-    CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
-    CHECK_EQ("Type 'number' could not be converted into 'string'", toString(result.errors[1]));
+
+    if (FFlag::LuauBetterTypeMismatchErrors)
+    {
+        CHECK_EQ("Expected this to be 'number', but got 'string'", toString(result.errors[0]));
+        CHECK_EQ("Expected this to be 'string', but got 'number'", toString(result.errors[1]));
+    }
+    else
+    {
+        CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
+        CHECK_EQ("Type 'number' could not be converted into 'string'", toString(result.errors[1]));
+    }
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "string_format_use_correct_argument3")
@@ -890,7 +926,10 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "aliased_string_format")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
+    if (FFlag::LuauBetterTypeMismatchErrors)
+        CHECK_EQ("Expected this to be 'number', but got 'string'", toString(result.errors[0]));
+    else
+        CHECK_EQ("Type 'string' could not be converted into 'number'", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "string_lib_self_noself")
@@ -983,13 +1022,27 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "tonumber_returns_optional_number_type")
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 
     if (FFlag::LuauSolverV2)
-        CHECK_EQ(
-            "Type 'number?' could not be converted into 'number'; \n"
-            "this is because the 2nd component of the union is `nil`, which is not a subtype of `number`",
-            toString(result.errors[0])
-        );
+    {
+        if (FFlag::LuauBetterTypeMismatchErrors)
+            CHECK_EQ(
+                "Expected this to be 'number', but got 'number?'; \n"
+                "the 2nd component of the union is `nil`, which is not a subtype of `number`",
+                toString(result.errors[0])
+            );
+        else
+            CHECK_EQ(
+                "Type 'number?' could not be converted into 'number'; \n"
+                "this is because the 2nd component of the union is `nil`, which is not a subtype of `number`",
+                toString(result.errors[0])
+            );
+    }
     else
-        CHECK_EQ("Type 'number?' could not be converted into 'number'", toString(result.errors[0]));
+    {
+        if (FFlag::LuauBetterTypeMismatchErrors)
+            CHECK_EQ("Expected this to be 'number', but got 'number?'", toString(result.errors[0]));
+        else
+            CHECK_EQ("Type 'number?' could not be converted into 'number'", toString(result.errors[0]));
+    }
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "tonumber_returns_optional_number_type2")
@@ -1270,6 +1323,26 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "table_clone_persistent_skip")
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(BuiltinsFixture, "table_clone_should_support_variadic_any_in_old_solver")
+{
+    ScopedFastFlag _{FFlag::LuauTableCloneClonesType4, true};
+
+    fileResolver.source["game/A"] = R"(
+        --!nonstrict
+        return function()
+            return {}
+        end
+    )";
+
+    fileResolver.source["game/B"] = R"(
+        local A = require(game.A)
+        local _ = table.clone(A())
+    )";
+
+    CheckResult result = getFrontend().check("game/B");
+    LUAU_REQUIRE_ERROR_COUNT(0, result);
+}
+
 TEST_CASE_FIXTURE(BuiltinsFixture, "set_metatable_needs_arguments")
 {
     // In the new solver, nil can certainly be used where a generic is required, so all generic parameters are optional.
@@ -1286,13 +1359,39 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "set_metatable_needs_arguments")
     CHECK_EQ(toString(result.errors[1]), "Argument count mismatch. Function 'a.b' expects 2 arguments, but only 1 is specified");
 }
 
+TEST_CASE_FIXTURE(BuiltinsFixture, "table_clone_intersection_of_tables")
+{
+    CheckResult result = check(R"(
+        type FIRST = {
+            some: string,
+        }
+
+        type SECOND = FIRST & {
+            thing: string,
+        }
+
+        local b: SECOND
+        -- c's type used to be FIRST, but should be the full type of SECOND
+        local c = table.clone(b)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    if (FFlag::LuauSolverV2 || FFlag::LuauCloneForIntersectionsUnions)
+    {
+        CHECK_EQ("{ some: string } & { thing: string }", toString(requireType("c"), {true}));
+        CHECK_EQ("FIRST & { thing: string }", toString(requireType("c")));
+    }
+}
+
 TEST_CASE_FIXTURE(Fixture, "typeof_unresolved_function")
 {
+    ScopedFastFlag unknownGlobalFixSuggestion{FFlag::LuauUnknownGlobalFixSuggestion, true};
     CheckResult result = check(R"(
         local function f(a: typeof(f)) end
         )");
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ("Unknown global 'f'", toString(result.errors[0]));
+    CHECK_EQ("Unknown global 'f'; consider assigning to it first", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "no_persistent_typelevel_change")
@@ -1588,7 +1687,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "string_find_should_not_crash")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_dot_clone_type_states")
 {
-    ScopedFastFlag sff{FFlag::LuauTableCloneClonesType3, true};
+    ScopedFastFlag sff{FFlag::LuauTableCloneClonesType4, true};
     CheckResult result = check(R"(
         local t1 = {}
         t1.x = 5
@@ -1728,12 +1827,7 @@ table.insert(1::any, 2::any)
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_requires_all_fields")
 {
-    ScopedFastFlag _[] = {
-        {FFlag::LuauNoScopeShallNotSubsumeAll, true},
-        {FFlag::LuauFilterOverloadsByArity, true},
-        {FFlag::LuauSubtypingReportGenericBoundMismatches2, true},
-        {FFlag::LuauSubtypingGenericsDoesntUseVariance, true}
-    };
+    ScopedFastFlag _{FFlag::LuauNoScopeShallNotSubsumeAll, true};
 
     CheckResult result = check(R"(
         local function huh(): { { x: number, y: string } }
@@ -1787,15 +1881,12 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "read_refinements_on_persistent_tables_known_
 TEST_CASE_FIXTURE(BuiltinsFixture, "next_with_refined_any")
 {
     ScopedFastFlag lsv2{FFlag::LuauSolverV2, true};
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSubtypingPrimitiveAndGenericTableTypes, true}, {FFlag::LuauUnifyShortcircuitSomeIntersectionsAndUnions, true}
-    };
 
     CheckResult result = check(R"(
         --!strict
         local t: any = {"hello", "world"}
         if type(t) == "table" and next(t) then
-	        local foo, bar = next(t)
+            local foo, bar = next(t)
             local _ = foo
             local _ = bar
         end
@@ -1810,7 +1901,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "next_with_refined_any")
 TEST_CASE_FIXTURE(BuiltinsFixture, "pairs_with_refined_any")
 {
     ScopedFastFlag lsv2{FFlag::LuauSolverV2, true};
-    ScopedFastFlag sff{FFlag::LuauSubtypingPrimitiveAndGenericTableTypes, true};
 
     CheckResult result = check(R"(
         --!strict
@@ -1832,12 +1922,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "pairs_with_refined_any")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "vector_lerp_should_not_crash")
 {
-    ScopedFastFlag _[]{
-        {FFlag::LuauCompileVectorLerp, true},
-        {FFlag::LuauTypeCheckerVectorLerp2, true},
-        {FFlag::LuauVectorLerp, true},
-    };
-
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local function half(x: number, y: number, z: number): vector
             return vector.lerp(vector.zero, vector.create(x, y, z), 0.5)

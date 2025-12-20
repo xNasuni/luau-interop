@@ -172,10 +172,10 @@ public:
 
     void vblendvps(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, RegisterX64 mask);
     void vblendvpd(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, RegisterX64 mask);
-    void vblendvpd_DEPRECATED(RegisterX64 dst, RegisterX64 src1, OperandX64 mask, RegisterX64 src3);
 
     void vpshufps(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t shuffle);
     void vpinsrd(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t offset);
+    void vpextrd(RegisterX64 dst, RegisterX64 src, uint8_t offset);
 
     void vdpps(OperandX64 dst, OperandX64 src1, OperandX64 src2, uint8_t mask);
     void vfmadd213ps(OperandX64 dst, OperandX64 src1, OperandX64 src2);

@@ -12,7 +12,11 @@
 #include "lstate.h"
 #include "ltm.h"
 
-LUAU_FASTFLAG(LuauCodegenDirectCompare2)
+LUAU_FASTFLAG(LuauCodegenBlockSafeEnv)
+LUAU_FASTFLAGVARIABLE(LuauCodegenLoopStepDetectFix)
+LUAU_FASTFLAGVARIABLE(LuauCodegenLinearAndOr)
+LUAU_FASTFLAG(LuauCodegenUpvalueLoadProp)
+LUAU_FASTFLAG(LuauCodegenSplitFloat)
 
 namespace Luau
 {
@@ -272,7 +276,6 @@ void translateInstJumpxEqNil(IrBuilder& build, const Instruction* pc, int pcpos)
 
 void translateInstJumpxEqNilShortcut(IrBuilder& build, const Instruction* pc, int pcpos)
 {
-    CODEGEN_ASSERT(FFlag::LuauCodegenDirectCompare2);
     int rr = LUAU_INSN_A(pc[2]);
 
     int ra = LUAU_INSN_A(*pc);
@@ -320,7 +323,6 @@ void translateInstJumpxEqB(IrBuilder& build, const Instruction* pc, int pcpos)
 
 void translateInstJumpxEqBShortcut(IrBuilder& build, const Instruction* pc, int pcpos)
 {
-    CODEGEN_ASSERT(FFlag::LuauCodegenDirectCompare2);
     int rr = LUAU_INSN_A(pc[2]);
 
     int ra = LUAU_INSN_A(*pc);
@@ -377,7 +379,6 @@ void translateInstJumpxEqN(IrBuilder& build, const Instruction* pc, int pcpos)
 
 void translateInstJumpxEqNShortcut(IrBuilder& build, const Instruction* pc, int pcpos)
 {
-    CODEGEN_ASSERT(FFlag::LuauCodegenDirectCompare2);
     int rr = LUAU_INSN_A(pc[2]);
 
     int ra = LUAU_INSN_A(*pc);
@@ -433,7 +434,6 @@ void translateInstJumpxEqS(IrBuilder& build, const Instruction* pc, int pcpos)
 
 void translateInstJumpxEqSShortcut(IrBuilder& build, const Instruction* pc, int pcpos)
 {
-    CODEGEN_ASSERT(FFlag::LuauCodegenDirectCompare2);
     int rr = LUAU_INSN_A(pc[2]);
 
     int ra = LUAU_INSN_A(*pc);
@@ -832,7 +832,15 @@ void translateInstGetUpval(IrBuilder& build, const Instruction* pc, int pcpos)
     int ra = LUAU_INSN_A(*pc);
     int up = LUAU_INSN_B(*pc);
 
-    build.inst(IrCmd::GET_UPVALUE, build.vmReg(ra), build.vmUpvalue(up));
+    if (FFlag::LuauCodegenUpvalueLoadProp)
+    {
+        IrOp value = build.inst(IrCmd::GET_UPVALUE, build.vmUpvalue(up));
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), value);
+    }
+    else
+    {
+        build.inst(IrCmd::GET_UPVALUE, build.vmReg(ra), build.vmUpvalue(up));
+    }
 }
 
 void translateInstSetUpval(IrBuilder& build, const Instruction* pc, int pcpos)
@@ -840,7 +848,15 @@ void translateInstSetUpval(IrBuilder& build, const Instruction* pc, int pcpos)
     int ra = LUAU_INSN_A(*pc);
     int up = LUAU_INSN_B(*pc);
 
-    build.inst(IrCmd::SET_UPVALUE, build.vmUpvalue(up), build.vmReg(ra), build.undef());
+    if (FFlag::LuauCodegenUpvalueLoadProp)
+    {
+        IrOp value = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(ra));
+        build.inst(IrCmd::SET_UPVALUE, build.vmUpvalue(up), value, build.undef());
+    }
+    else
+    {
+        build.inst(IrCmd::SET_UPVALUE, build.vmUpvalue(up), build.vmReg(ra), build.undef());
+    }
 }
 
 void translateInstCloseUpvals(IrBuilder& build, const Instruction* pc)
@@ -881,7 +897,10 @@ IrOp translateFastCallN(IrBuilder& build, const Instruction* pc, int pcpos, bool
     IrOp fallback = build.block(IrBlockKind::Fallback);
 
     // In unsafe environment, instead of retrying fastcall at 'pcpos' we side-exit directly to fallback sequence
-    build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos + getOpLength(opcode)));
+    if (FFlag::LuauCodegenBlockSafeEnv)
+        build.checkSafeEnv(pcpos + getOpLength(opcode));
+    else
+        build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos + getOpLength(opcode)));
 
     BuiltinImplResult br = translateBuiltin(
         build, LuauBuiltinFunction(bfid), ra, arg, builtinArgs, builtinArg3, nparams, nresults, fallback, pcpos + getOpLength(opcode)
@@ -936,7 +955,8 @@ static IrOp getLoopStepK(IrBuilder& build, int ra)
 {
     IrBlock& active = build.function.blocks[build.activeBlockIdx];
 
-    if (active.start + 2 < build.function.instructions.size())
+    if (FFlag::LuauCodegenLoopStepDetectFix ? active.start + 2 <= build.function.instructions.size()
+                                            : active.start + 2 < build.function.instructions.size())
     {
         IrInst& sv = build.function.instructions[build.function.instructions.size() - 2];
         IrInst& st = build.function.instructions[build.function.instructions.size() - 1];
@@ -1071,7 +1091,11 @@ void translateInstForGPrepNext(IrBuilder& build, const Instruction* pc, int pcpo
     IrOp fallback = build.block(IrBlockKind::Fallback);
 
     // fast-path: pairs/next
-    build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+    if (FFlag::LuauCodegenBlockSafeEnv)
+        build.checkSafeEnv(pcpos);
+    else
+        build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+
     IrOp tagB = build.inst(IrCmd::LOAD_TAG, build.vmReg(ra + 1));
     build.inst(IrCmd::CHECK_TAG, tagB, build.constTag(LUA_TTABLE), fallback);
     IrOp tagC = build.inst(IrCmd::LOAD_TAG, build.vmReg(ra + 2));
@@ -1099,7 +1123,11 @@ void translateInstForGPrepInext(IrBuilder& build, const Instruction* pc, int pcp
     IrOp finish = build.block(IrBlockKind::Internal);
 
     // fast-path: ipairs/inext
-    build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+    if (FFlag::LuauCodegenBlockSafeEnv)
+        build.checkSafeEnv(pcpos);
+    else
+        build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+
     IrOp tagB = build.inst(IrCmd::LOAD_TAG, build.vmReg(ra + 1));
     build.inst(IrCmd::CHECK_TAG, tagB, build.constTag(LUA_TTABLE), fallback);
     IrOp tagC = build.inst(IrCmd::LOAD_TAG, build.vmReg(ra + 2));
@@ -1327,7 +1355,11 @@ void translateInstGetImport(IrBuilder& build, const Instruction* pc, int pcpos)
     int k = LUAU_INSN_D(*pc);
     uint32_t aux = pc[1];
 
-    build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+    if (FFlag::LuauCodegenBlockSafeEnv)
+        build.checkSafeEnv(pcpos);
+    else
+        build.inst(IrCmd::CHECK_SAFE_ENV, build.vmExit(pcpos));
+
     build.inst(IrCmd::GET_CACHED_IMPORT, build.vmReg(ra), build.vmConst(k), build.constImport(aux), build.constUint(pcpos + 1));
 }
 
@@ -1351,18 +1383,30 @@ void translateInstGetTableKS(IrBuilder& build, const Instruction* pc, int pcpos)
         if (str->len == 1 && (*field == 'X' || *field == 'x'))
         {
             IrOp value = build.inst(IrCmd::LOAD_FLOAT, build.vmReg(rb), build.constInt(0));
+
+            if (FFlag::LuauCodegenSplitFloat)
+                value = build.inst(IrCmd::FLOAT_TO_NUM, value);
+
             build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), value);
             build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TNUMBER));
         }
         else if (str->len == 1 && (*field == 'Y' || *field == 'y'))
         {
             IrOp value = build.inst(IrCmd::LOAD_FLOAT, build.vmReg(rb), build.constInt(4));
+
+            if (FFlag::LuauCodegenSplitFloat)
+                value = build.inst(IrCmd::FLOAT_TO_NUM, value);
+
             build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), value);
             build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TNUMBER));
         }
         else if (str->len == 1 && (*field == 'Z' || *field == 'z'))
         {
             IrOp value = build.inst(IrCmd::LOAD_FLOAT, build.vmReg(rb), build.constInt(8));
+
+            if (FFlag::LuauCodegenSplitFloat)
+                value = build.inst(IrCmd::FLOAT_TO_NUM, value);
+
             build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), value);
             build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TNUMBER));
         }
@@ -1653,31 +1697,43 @@ void translateInstAndX(IrBuilder& build, const Instruction* pc, int pcpos, IrOp 
     int ra = LUAU_INSN_A(*pc);
     int rb = LUAU_INSN_B(*pc);
 
-    IrOp fallthrough = build.block(IrBlockKind::Internal);
-    IrOp next = build.blockAtInst(pcpos + 1);
-
-    IrOp target = (ra == rb) ? next : build.block(IrBlockKind::Internal);
-
-    build.inst(IrCmd::JUMP_IF_FALSY, build.vmReg(rb), target, fallthrough);
-    build.beginBlock(fallthrough);
-
-    IrOp load = build.inst(IrCmd::LOAD_TVALUE, c);
-    build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load);
-    build.inst(IrCmd::JUMP, next);
-
-    if (ra == rb)
+    if (FFlag::LuauCodegenLinearAndOr)
     {
-        build.beginBlock(next);
+        // "b and c" -> "truthy(b) ? c : b"
+        IrOp lhs = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
+        IrOp rhs = build.inst(IrCmd::LOAD_TVALUE, c);
+
+        IrOp result = build.inst(IrCmd::SELECT_IF_TRUTHY, lhs, rhs, lhs);
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), result);
     }
     else
     {
-        build.beginBlock(target);
+        IrOp fallthrough = build.block(IrBlockKind::Internal);
+        IrOp next = build.blockAtInst(pcpos + 1);
 
-        IrOp load1 = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
-        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load1);
+        IrOp target = (ra == rb) ? next : build.block(IrBlockKind::Internal);
+
+        build.inst(IrCmd::JUMP_IF_FALSY, build.vmReg(rb), target, fallthrough);
+        build.beginBlock(fallthrough);
+
+        IrOp load = build.inst(IrCmd::LOAD_TVALUE, c);
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load);
         build.inst(IrCmd::JUMP, next);
 
-        build.beginBlock(next);
+        if (ra == rb)
+        {
+            build.beginBlock(next);
+        }
+        else
+        {
+            build.beginBlock(target);
+
+            IrOp load1 = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
+            build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load1);
+            build.inst(IrCmd::JUMP, next);
+
+            build.beginBlock(next);
+        }
     }
 }
 
@@ -1686,31 +1742,43 @@ void translateInstOrX(IrBuilder& build, const Instruction* pc, int pcpos, IrOp c
     int ra = LUAU_INSN_A(*pc);
     int rb = LUAU_INSN_B(*pc);
 
-    IrOp fallthrough = build.block(IrBlockKind::Internal);
-    IrOp next = build.blockAtInst(pcpos + 1);
-
-    IrOp target = (ra == rb) ? next : build.block(IrBlockKind::Internal);
-
-    build.inst(IrCmd::JUMP_IF_TRUTHY, build.vmReg(rb), target, fallthrough);
-    build.beginBlock(fallthrough);
-
-    IrOp load = build.inst(IrCmd::LOAD_TVALUE, c);
-    build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load);
-    build.inst(IrCmd::JUMP, next);
-
-    if (ra == rb)
+    if (FFlag::LuauCodegenLinearAndOr)
     {
-        build.beginBlock(next);
+        // "b or c" -> truthy(b) ? b : c
+        IrOp lhs = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
+        IrOp rhs = build.inst(IrCmd::LOAD_TVALUE, c);
+
+        IrOp result = build.inst(IrCmd::SELECT_IF_TRUTHY, lhs, lhs, rhs);
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), result);
     }
     else
     {
-        build.beginBlock(target);
+        IrOp fallthrough = build.block(IrBlockKind::Internal);
+        IrOp next = build.blockAtInst(pcpos + 1);
 
-        IrOp load1 = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
-        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load1);
+        IrOp target = (ra == rb) ? next : build.block(IrBlockKind::Internal);
+
+        build.inst(IrCmd::JUMP_IF_TRUTHY, build.vmReg(rb), target, fallthrough);
+        build.beginBlock(fallthrough);
+
+        IrOp load = build.inst(IrCmd::LOAD_TVALUE, c);
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load);
         build.inst(IrCmd::JUMP, next);
 
-        build.beginBlock(next);
+        if (ra == rb)
+        {
+            build.beginBlock(next);
+        }
+        else
+        {
+            build.beginBlock(target);
+
+            IrOp load1 = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
+            build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), load1);
+            build.inst(IrCmd::JUMP, next);
+
+            build.beginBlock(next);
+        }
     }
 }
 

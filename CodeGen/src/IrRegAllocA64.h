@@ -40,6 +40,7 @@ struct IrRegAllocA64
     void freeLastUseReg(IrInst& target, uint32_t index);
     void freeLastUseRegs(const IrInst& inst, uint32_t index);
 
+    void freeTemp(RegisterA64 reg);
     void freeTempRegs();
 
     // Spills all live registers that outlive current instruction; all allocated registers are assumed to be undefined
@@ -73,6 +74,8 @@ struct IrRegAllocA64
         RegisterA64 origin;
         int8_t slot;
     };
+
+    void restore(const Spill& s, RegisterA64 reg);
 
     // Spills the selected register
     void spill(Set& set, uint32_t index, uint32_t targetInstIdx);

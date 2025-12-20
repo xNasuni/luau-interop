@@ -9,8 +9,8 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(LuauSolverV2)
-LUAU_FASTFLAG(LuauSimplifyRefinementOfReadOnlyProperty)
 LUAU_DYNAMIC_FASTINT(LuauSimplificationComplexityLimit)
+LUAU_FASTFLAG(LuauSimplifyIntersectionNoTreeSet)
 
 namespace
 {
@@ -641,8 +641,6 @@ TEST_CASE_FIXTURE(SimplifyFixture, "(error | string) & any")
 
 TEST_CASE_FIXTURE(SimplifyFixture, "{ x: number, y: number } & { x: unknown }")
 {
-    ScopedFastFlag sff{FFlag::LuauSimplifyRefinementOfReadOnlyProperty, true};
-
     TypeId leftTy = mkTable({{"x", builtinTypes->numberType}, {"y", builtinTypes->numberType}});
     TypeId rightTy = mkTable({{"x", Property::rw(builtinTypes->unknownType)}});
 
@@ -651,8 +649,6 @@ TEST_CASE_FIXTURE(SimplifyFixture, "{ x: number, y: number } & { x: unknown }")
 
 TEST_CASE_FIXTURE(SimplifyFixture, "{ x: number, y: number } & { read x: unknown }")
 {
-    ScopedFastFlag sff{FFlag::LuauSimplifyRefinementOfReadOnlyProperty, true};
-
     TypeId leftTy = mkTable({{"x", builtinTypes->numberType}, {"y", builtinTypes->numberType}});
     TypeId rightTy = mkTable({{"x", Property::readonly(builtinTypes->unknownType)}});
 
@@ -661,8 +657,6 @@ TEST_CASE_FIXTURE(SimplifyFixture, "{ x: number, y: number } & { read x: unknown
 
 TEST_CASE_FIXTURE(SimplifyFixture, "{ read x: Child } & { x: Parent }")
 {
-    ScopedFastFlag sff{FFlag::LuauSimplifyRefinementOfReadOnlyProperty, true};
-
     createSomeExternTypes(getFrontend());
 
     TypeId parentTy = getFrontend().globals.globalScope->exportedTypeBindings["Parent"].type;
@@ -680,12 +674,18 @@ TEST_CASE_FIXTURE(SimplifyFixture, "{ read x: Child } & { x: Parent }")
 
 TEST_CASE_FIXTURE(SimplifyFixture, "intersect_parts_empty_table_non_empty")
 {
-    TypeId emptyTable = arena->addType(TableType{});
+    ScopedFastFlag _{FFlag::LuauSimplifyIntersectionNoTreeSet, true};
+
+    TableType empty;
+    empty.state = TableState::Sealed;
+    TypeId emptyTable = arena->addType(std::move(empty));
+
     TableType nonEmpty;
     nonEmpty.props["p"] = arena->addType(UnionType{{getBuiltins()->numberType, getBuiltins()->stringType}});
+    nonEmpty.state = TableState::Sealed;
     TypeId nonEmptyTable = arena->addType(std::move(nonEmpty));
-    // FIXME CLI-170522: This is wrong.
-    CHECK("never" == toString(simplifyIntersection(getBuiltins(), arena, {nonEmptyTable, emptyTable}).result));
+
+    CHECK("{ p: number | string }" == toString(simplifyIntersection(getBuiltins(), arena, {nonEmptyTable, emptyTable}).result));
 }
 
 TEST_SUITE_END();

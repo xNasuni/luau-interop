@@ -1,17 +1,19 @@
 # Luau.Common Sources
-# Note: Until 3.19, INTERFACE targets couldn't have SOURCES property set
-if(NOT ${CMAKE_VERSION} VERSION_LESS "3.19")
-    target_sources(Luau.Common PRIVATE
-        Common/include/Luau/Common.h
-        Common/include/Luau/Bytecode.h
-        Common/include/Luau/BytecodeUtils.h
-        Common/include/Luau/DenseHash.h
-        Common/include/Luau/ExperimentalFlags.h
-        Common/include/Luau/HashUtil.h
-        Common/include/Luau/Variant.h
-        Common/include/Luau/VecDeque.h
-    )
-endif()
+target_sources(Luau.Common PRIVATE
+    Common/include/Luau/Common.h
+    Common/include/Luau/Bytecode.h
+    Common/include/Luau/BytecodeUtils.h
+    Common/include/Luau/DenseHash.h
+    Common/include/Luau/ExperimentalFlags.h
+    Common/include/Luau/HashUtil.h
+    Common/include/Luau/StringUtils.h
+    Common/include/Luau/TimeTrace.h
+    Common/include/Luau/Variant.h
+    Common/include/Luau/VecDeque.h
+
+    Common/src/StringUtils.cpp
+    Common/src/TimeTrace.cpp
+)
 
 # Luau.Ast Sources
 target_sources(Luau.Ast PRIVATE
@@ -25,8 +27,6 @@ target_sources(Luau.Ast PRIVATE
     Ast/include/Luau/Parser.h
     Ast/include/Luau/ParseResult.h
     Ast/include/Luau/PrettyPrinter.h
-    Ast/include/Luau/StringUtils.h
-    Ast/include/Luau/TimeTrace.h
 
     Ast/src/Allocator.cpp
     Ast/src/Ast.cpp
@@ -36,8 +36,6 @@ target_sources(Luau.Ast PRIVATE
     Ast/src/Location.cpp
     Ast/src/Parser.cpp
     Ast/src/PrettyPrinter.cpp
-    Ast/src/StringUtils.cpp
-    Ast/src/TimeTrace.cpp
 )
 
 # Luau.Compiler Sources
@@ -62,6 +60,7 @@ target_sources(Luau.Compiler PRIVATE
     Compiler/src/CostModel.h
     Compiler/src/TableShape.h
     Compiler/src/Types.h
+    Compiler/src/Utils.h
     Compiler/src/ValueTracking.h
 )
 
@@ -69,9 +68,11 @@ target_sources(Luau.Compiler PRIVATE
 target_sources(Luau.Config PRIVATE
     Config/include/Luau/Config.h
     Config/include/Luau/LinterConfig.h
+    Config/include/Luau/LuauConfig.h
 
     Config/src/Config.cpp
     Config/src/LinterConfig.cpp
+    Config/src/LuauConfig.cpp
 )
 
 # Luau.CodeGen Sources
@@ -185,6 +186,7 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/Constraint.h
     Analysis/include/Luau/ConstraintGenerator.h
     Analysis/include/Luau/ConstraintSet.h
+    Analysis/include/Luau/NativeStackGuard.h
     Analysis/include/Luau/ConstraintSolver.h
     Analysis/include/Luau/ControlFlow.h
     Analysis/include/Luau/DataFlowGraph.h
@@ -192,7 +194,6 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/Def.h
     Analysis/include/Luau/Documentation.h
     Analysis/include/Luau/Error.h
-    Analysis/include/Luau/EqSatSimplification.h
     Analysis/include/Luau/ExpectedTypeVisitor.h
     Analysis/include/Luau/FileResolver.h
     Analysis/include/Luau/FragmentAutocomplete.h
@@ -204,6 +205,7 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/Instantiation.h
     Analysis/include/Luau/Instantiation2.h
     Analysis/include/Luau/IostreamHelpers.h
+    Analysis/include/Luau/IterativeTypeVisitor.h
     Analysis/include/Luau/JsonEmitter.h
     Analysis/include/Luau/Linter.h
     Analysis/include/Luau/LValue.h
@@ -255,6 +257,7 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/UnifierSharedState.h
     Analysis/include/Luau/UserDefinedTypeFunction.h
     Analysis/include/Luau/VisitType.h
+    Analysis/include/Luau/IterativeTypeVisitor.h
 
     Analysis/src/Anyification.cpp
     Analysis/src/ApplyTypeFunction.cpp
@@ -274,17 +277,18 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/src/Def.cpp
     Analysis/src/EmbeddedBuiltinDefinitions.cpp
     Analysis/src/Error.cpp
-    Analysis/src/EqSatSimplification.cpp
     Analysis/src/ExpectedTypeVisitor.cpp
     Analysis/src/FileResolver.cpp
     Analysis/src/FragmentAutocomplete.cpp
     Analysis/src/Frontend.cpp
     Analysis/src/Generalization.cpp
+    Analysis/src/NativeStackGuard.cpp
     Analysis/src/GlobalTypes.cpp
     Analysis/src/InferPolarity.cpp
     Analysis/src/Instantiation.cpp
     Analysis/src/Instantiation2.cpp
     Analysis/src/IostreamHelpers.cpp
+    Analysis/src/IterativeTypeVisitor.cpp
     Analysis/src/JsonEmitter.cpp
     Analysis/src/Linter.cpp
     Analysis/src/LValue.cpp
@@ -293,6 +297,7 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/src/Normalize.cpp
     Analysis/src/OverloadResolution.cpp
     Analysis/src/Quantify.cpp
+    Analysis/src/RecursionCounter.cpp
     Analysis/src/Refinement.cpp
     Analysis/src/RequireTracer.cpp
     Analysis/src/Scope.cpp
@@ -324,19 +329,6 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/src/Unifier.cpp
     Analysis/src/Unifier2.cpp
     Analysis/src/UserDefinedTypeFunction.cpp
-)
-
-# Luau.EqSat Sources
-target_sources(Luau.EqSat PRIVATE
-    EqSat/include/Luau/EGraph.h
-    EqSat/include/Luau/Id.h
-    EqSat/include/Luau/Language.h
-    EqSat/include/Luau/LanguageHash.h
-    EqSat/include/Luau/Slice.h
-    EqSat/include/Luau/UnionFind.h
-
-    EqSat/src/Id.cpp
-    EqSat/src/UnionFind.cpp
 )
 
 # Luau.VM Sources
@@ -470,10 +462,6 @@ if(TARGET Luau.UnitTest)
         tests/CostModel.test.cpp
         tests/DataFlowGraph.test.cpp
         tests/DenseHash.test.cpp
-        tests/EqSat.language.test.cpp
-        tests/EqSat.propositional.test.cpp
-        tests/EqSat.slice.test.cpp
-        tests/EqSatSimplification.test.cpp
         tests/Error.test.cpp
         tests/Fixture.cpp
         tests/Fixture.h
@@ -482,7 +470,6 @@ if(TARGET Luau.UnitTest)
         tests/Generalization.test.cpp
         tests/InferPolarity.test.cpp
         tests/InsertionOrderedMap.test.cpp
-        tests/Instantiation2.test.cpp
         tests/IostreamOptional.h
         tests/IrBuilder.test.cpp
         tests/IrCallWrapperX64.test.cpp
@@ -522,6 +509,7 @@ if(TARGET Luau.UnitTest)
         tests/TypeInfer.cfa.test.cpp
         tests/TypeInfer.classes.test.cpp
         tests/TypeInfer.definitions.test.cpp
+        tests/TypeInfer.typeInstantiations.test.cpp
         tests/TypeInfer.functions.test.cpp
         tests/TypeInfer.generics.test.cpp
         tests/TypeInfer.intersectionTypes.test.cpp
@@ -585,24 +573,23 @@ endif()
 if(TARGET Luau.Require)
     # Luau.Require Sources
     target_sources(Luau.Require PRIVATE
-        Require/Runtime/include/Luau/Require.h
+    # Public headers
+    Require/include/Luau/Require.h
+    Require/include/Luau/RequireNavigator.h
 
-        Require/Runtime/src/Navigation.h
-        Require/Runtime/src/RequireImpl.h
+    # Internal headers
+    Require/src/AliasCycleTracker.h
+    Require/src/Navigation.h
+    Require/src/PathUtilities.h
+    Require/src/RequireImpl.h
 
-        Require/Runtime/src/Navigation.cpp
-        Require/Runtime/src/Require.cpp
-        Require/Runtime/src/RequireImpl.cpp)
-endif()
-
-if(TARGET Luau.RequireNavigator)
-    # Luau.Require Sources
-    target_sources(Luau.RequireNavigator PRIVATE
-        Require/Navigator/include/Luau/PathUtilities.h
-        Require/Navigator/include/Luau/RequireNavigator.h
-
-        Require/Navigator/src/PathUtilities.cpp
-        Require/Navigator/src/RequireNavigator.cpp)
+    # Source files
+    Require/src/AliasCycleTracker.cpp
+    Require/src/Navigation.cpp
+    Require/src/PathUtilities.cpp
+    Require/src/Require.cpp
+    Require/src/RequireImpl.cpp
+    Require/src/RequireNavigator.cpp)
 endif()
 
 if(TARGET Luau.Web)

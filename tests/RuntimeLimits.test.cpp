@@ -11,6 +11,7 @@
 
 #include "Fixture.h"
 
+#include "Luau/Error.h"
 #include "doctest.h"
 
 #include <algorithm>
@@ -24,10 +25,9 @@ LUAU_FASTINT(LuauTypeInferRecursionLimit)
 LUAU_FASTFLAG(LuauSolverV2)
 LUAU_FASTFLAG(LuauIceLess)
 LUAU_FASTFLAG(LuauDontDynamicallyCreateRedundantSubtypeConstraints)
-LUAU_FASTFLAG(LuauLimitUnification)
-LUAU_FASTFLAG(LuauSubtypingGenericsDoesntUseVariance)
-LUAU_FASTFLAG(LuauReduceSetTypeStackPressure)
-LUAU_FASTINT(LuauGenericCounterMaxDepth)
+LUAU_FASTFLAG(LuauUseNativeStackGuard)
+LUAU_FASTINT(LuauGenericCounterMaxSteps)
+LUAU_FASTFLAG(LuauGenericCounterStepsInsteadOfCount)
 
 struct LimitFixture : BuiltinsFixture
 {
@@ -421,11 +421,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "limit_number_of_dynamically_created_constrai
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "subtyping_should_cache_pairs_in_seen_set" * doctest::timeout(1.0))
 {
-    ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverV2, true},
-        // This flags surfaced and solves the problem. (The original PR was reverted)
-        {FFlag::LuauSubtypingGenericsDoesntUseVariance, true},
-    };
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
 
     constexpr const char* src = R"LUAU(
     type DataProxy = any
@@ -548,10 +544,10 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "test_generic_pruning_recursion_limit")
 {
     ScopedFastFlag sffs[] = {
         {FFlag::LuauSolverV2, true},
-        {FFlag::LuauReduceSetTypeStackPressure, true},
+        {FFlag::LuauGenericCounterStepsInsteadOfCount, true},
     };
 
-    ScopedFastInt sfi{FInt::LuauGenericCounterMaxDepth, 1};
+    ScopedFastInt sfi{FInt::LuauGenericCounterMaxSteps, 1};
 
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local function get(scale)
@@ -564,11 +560,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "test_generic_pruning_recursion_limit")
 TEST_CASE_FIXTURE(BuiltinsFixture, "unification_runs_a_limited_number_of_iterations_before_stopping" * doctest::timeout(4.0))
 {
     ScopedFastFlag sff[] = {
-        // These are necessary to trigger the bug
         {FFlag::LuauSolverV2, true},
-
-        // This is the fix
-        {FFlag::LuauLimitUnification, true}
     };
 
     ScopedFastInt sfi{FInt::LuauTypeInferIterationLimit, 100};
@@ -587,6 +579,48 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "unification_runs_a_limited_number_of_iterati
 
     LUAU_REQUIRE_ERROR(result, UnificationTooComplex);
 }
+
+#if defined(_MSC_VER) || defined(__APPLE__)
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "native_stack_guard_prevents_stack_overflows" * doctest::timeout(4.0))
+{
+    ScopedFastFlag sff[] = {
+        {FFlag::LuauSolverV2, true},
+        {FFlag::LuauUseNativeStackGuard, true},
+    };
+
+    // Disable the iteration limit and very tightly constrain the stack.
+    ScopedFastInt sfi{FInt::LuauTypeInferIterationLimit, 0};
+    limitStackSize(38600);
+
+    try
+    {
+        (void)check(R"(
+            local function l0<A...>()
+                for l0=_,_ do
+                end
+            end
+
+            _ = if _._ then function(l0)
+            end elseif _._G then if `` then {n0=_,} else "luauExprConstantSt" elseif _[_][l0] then function()
+            end elseif _.n0 then if _[_] then if _ then _ else "aeld" elseif false then 0 else "lead"
+            return _.n0
+        )");
+    }
+    catch (InternalCompilerError& err)
+    {
+        // HACK: This test doesn't consistently stack overflow in the same subsystem because
+        // there is some other unrelated source of nondeterminism in the solver.
+        // For this test, it's aside from the point, so we write it to be a little bit flexible.
+        const std::string prefix = "Stack overflow in ";
+        CHECK(prefix == std::string(err.what()).substr(0, prefix.size()));
+        return;
+    }
+
+    CHECK_MESSAGE(false, "An expected InternalCompilerError was not thrown!");
+}
+
+#endif
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "fusion_normalization_spin" * doctest::timeout(1.0))
 {
@@ -617,6 +651,33 @@ local function innerScope<T>(
     local new = deriveScopeImpl(existing, ...)
 end
 
+    )"));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "fuzzer_stepwise_normalization_works" * doctest::timeout(4.0))
+{
+    LUAU_REQUIRE_ERRORS(check(R"(
+        _ = if _ then {n0=# _,[_]=_,``,[function(l0,l0,l0)
+        do end
+        end]=_,setmetatable,[l0(_ + _)]=_,} else _(),_,_
+        _[_](_,_(coroutine,_,_,nil),_(0,_()),function()
+        end)
+    )"));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "fuzzer_oom_unions" * doctest::timeout(4.0))
+{
+    LUAU_REQUIRE_ERRORS(check(R"(
+        local _ = true,l0
+        _ = if _ then _ else _._,if _[_] then nil elseif _ then `` else _._,...
+        _ = if _ then _ elseif _ then `` else _.n0,true,...
+        _G = if "" then _ else _.n0,_
+        _ = if _[_] then _ elseif _ then _ + n0 else _._,32804,...
+        _.readstring = _,_
+        local l0 = require(module0)
+        _ = _,l0,_
+        do end
+        _.readstring += _
     )"));
 }
 

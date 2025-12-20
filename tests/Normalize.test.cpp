@@ -9,15 +9,12 @@
 #include "doctest.h"
 
 #include "Luau/Normalize.h"
-#include "Luau/BuiltinDefinitions.h"
 #include <memory>
 
 LUAU_FASTFLAG(LuauSolverV2)
 LUAU_FASTINT(LuauTypeInferRecursionLimit)
 LUAU_FASTINT(LuauNormalizeIntersectionLimit)
 LUAU_FASTINT(LuauNormalizeUnionLimit)
-LUAU_FASTFLAG(LuauReturnMappedGenericPacksFromSubtyping3)
-LUAU_FASTFLAG(LuauNormalizerUnionTyvarsTakeMaxSize)
 
 using namespace Luau;
 
@@ -33,14 +30,11 @@ struct IsSubtypeFixture : Fixture
         if (!module->hasModuleScope())
             FAIL("isSubtype: module scope data is not available");
 
-        SimplifierPtr simplifier = newSimplifier(NotNull{&module->internalTypes}, getBuiltins());
-
         return ::Luau::isSubtype(
             a,
             b,
             NotNull{module->getModuleScope().get()},
             getBuiltins(),
-            NotNull{simplifier.get()},
             ice,
             FFlag::LuauSolverV2 ? SolverMode::New : SolverMode::Old
         );
@@ -1136,8 +1130,6 @@ TEST_CASE_FIXTURE(NormalizeFixture, "free_type_intersection_ordering")
 
 TEST_CASE_FIXTURE(NormalizeFixture, "tyvar_limit_one_sided_intersection" * doctest::timeout(0.5))
 {
-    ScopedFastFlag _{FFlag::LuauNormalizerUnionTyvarsTakeMaxSize, true}; // Affects stringification of free types.
-
     std::vector<TypeId> options;
     for (auto i = 0; i < 120; i++)
         options.push_back(arena.freshType(getBuiltins(), getGlobalScope()));
@@ -1283,10 +1275,7 @@ do end
 #if 0
 TEST_CASE_FIXTURE(BuiltinsFixture, "fuzz_union_type_pack_cycle")
 {
-    ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauReturnMappedGenericPacksFromSubtyping3, true},
-    };
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
     ScopedFastInt sfi{FInt::LuauTypeInferRecursionLimit, 0};
 
     // FIXME CLI-153131: This is constructing a cyclic type pack
