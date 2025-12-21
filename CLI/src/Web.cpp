@@ -268,8 +268,18 @@ EM_JS(void, ensureInterop, (), {
                 return Module.newIndexLuaTable(obj, key, value, bypassReadonly);
             };
 
+            obj[Symbol.iterator] = function* () {
+                const keys = Module.keysLuaTable(obj);
+                for (const key of keys) {
+                    yield [key, Module.indexLuaTable(obj, key)];
+                }
+            };
+            
             luaValue = new Proxy({}, {
                 get(target, prop, receiver) {
+                    if (prop === Symbol.iterator || prop in obj) {
+                        return obj[prop];
+                    }
                     if (prop in obj) {
                         return obj[prop];
                     }
@@ -286,9 +296,19 @@ EM_JS(void, ensureInterop, (), {
                     return Module.indexLuaTable(obj, prop) != null;
                 },
                 ownKeys(target) {
-                    return Reflect.ownKeys(obj);
+                    return Module.keysLuaTable(obj);
                 },
                 getOwnPropertyDescriptor(target, prop) {
+                    // const keys = Module.keysLuaTable(obj);
+                    // if (keys.includes(prop) || prop in obj) {
+                    //     return {
+                    //         enumerable: true,
+                    //         configurable: true,
+                    //         writable: true,
+                    //         value: this.get(target, prop)
+                    //     }
+                    // }
+
                     return Object.getOwnPropertyDescriptor(obj, prop);
                 }
             });
@@ -360,6 +380,24 @@ EM_JS(void, ensureInterop, (), {
         const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly ]);
 
         return modified == 1;
+    };
+
+    Module.keysLuaTable = function(luaTable) {
+        const luaTableData = luaTable[Module.LUA_VALUE];
+
+        if (luaTableData.released) {
+            throw new GlueError("attempt to get keys from released table");
+            return;
+        }
+
+        const transactionIdx = Module.ccall("luaKeys", "number", [ "number", "number" ], [ luaTableData.state, luaTableData.ref ]);
+
+        const transactionData = Module.transactionData[transactionIdx];
+        delete Module.transactionData[transactionIdx];
+
+        const luauValue = transactionData.map(v => Module.luauToJsValue(luaTableData.state, v));
+
+        return luauValue;
     };
 
     Module.getPersistentRef = function(jsValue, parent, key) {
@@ -602,6 +640,69 @@ EM_JS(int, setJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const c
             const errorStr = (e && e.toString) ? e.toString() : String(e);
             return luaError(errorStr);
         }
+    }
+
+    return 0;
+});
+
+EM_JS(char*, prepareJSKeyList, (const char* jsRefIdStr), {
+    const jsRefId = JSON.parse(UTF8ToString(jsRefIdStr));
+    const data = Module.jsValueCache.get(jsRefId);
+
+    if (data && data[Module.JS_VALUE]) {
+        let keys = null;
+        if (data[Module.JS_VALUE].value instanceof Map) {
+            keys = Array.from(data[Module.JS_VALUE].value.keys());
+        } else if (typeof data[Module.JS_VALUE].value === 'object') {
+            keys = Object.keys(data[Module.JS_VALUE].value);
+        }
+
+        if (keys) {
+            const keysId = String(jsRefId) + "_keys_" + crypto.randomUUID();
+            
+            Module.jsValueCache.set(keysId, {
+                [Module.JS_VALUE]: {
+                    value: keys,
+                    released: false
+                }
+            });
+            
+            const returnStr = JSON.stringify(keysId);
+            const lengthBytes = lengthBytesUTF8(returnStr) + 1;
+            const stringOnWasmHeap = _malloc(lengthBytes);
+            stringToUTF8(returnStr, stringOnWasmHeap, lengthBytes);
+            return stringOnWasmHeap;
+        }
+    }
+
+    return 0;
+});
+
+EM_JS(int, getJSIteratorNext, (int L_ptr, const char* jsRefIdStr, const char* keysRefIdStr, int index), {
+    const jsRefId = JSON.parse(UTF8ToString(jsRefIdStr));
+    const keysRefId = JSON.parse(UTF8ToString(keysRefIdStr));
+    
+    const objData = Module.jsValueCache.get(jsRefId);
+    const keysData = Module.jsValueCache.get(keysRefId);
+
+    if (objData && keysData) {
+        const keys = keysData[Module.JS_VALUE].value;
+        if (index >= keys.length) {
+            Module.jsValueCache.delete(keysRefId);
+            return 0; 
+        }
+
+        const currentKey = keys[index];
+
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'string', String(currentKey), "jsiter__key"]);
+
+        const [type, value] = Module.jsToLuauValue(objData[Module.JS_VALUE].value, currentKey);
+        
+        const valueStr = String(value);
+
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, type, valueStr, "jsiter__value"]);
+
+        return 1;
     }
 
     return 0;
@@ -875,6 +976,52 @@ int proxy_newindex(lua_State* L)
         lua_pop(L, 2);
         return 0;
     }
+}
+
+int proxy_iter_next(lua_State* L)
+{
+    const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
+    const char* keysRefIdStr = lua_tostring(L, lua_upvalueindex(2));
+    int index = lua_tointeger(L, lua_upvalueindex(3));
+
+    int found = getJSIteratorNext((int)L, jsRefIdStr, keysRefIdStr, index);
+
+    if (found)
+    {
+        lua_pushinteger(L, index + 1);
+        lua_replace(L, lua_upvalueindex(3));
+
+        return 2;
+    }
+
+    return 0;
+}
+
+int proxy_iter(lua_State* L)
+{
+    jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
+    if (!ud || !ud->ref)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    char* keysRefRaw = prepareJSKeyList(ud->ref);
+    if (!keysRefRaw)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushstring(L, ud->ref);
+    lua_pushstring(L, keysRefRaw);
+    lua_pushinteger(L, 0);
+
+    free(keysRefRaw);
+
+    lua_pushcclosure(L, proxy_iter_next, "proxy_iter_next", 3);
+
+    return 1;
 }
 
 // clang-format off
@@ -1265,6 +1412,56 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
     return true;
 }
 
+extern "C" int luaKeys(lua_State* L, int lref, int argIdx)
+{
+    int top = lua_gettop(L);
+
+    try
+    {
+        lua_getref(L, lref);
+
+        if (!lua_istable(L, -1))
+        {
+            lua_pop(L, 1);
+            setMultretData((int)L, "[]", argIdx);
+            return 0;
+        }
+
+        std::string retJson = "[";
+        bool first = true;
+
+        lua_pushnil(L);
+        while (lua_next(L, -2))
+        {
+            if (!first)
+            {
+                retJson += ",";
+            }
+
+            int ref = LUA_NOREF;
+            retJson += serializeLuaValue(L, -2, &ref);
+
+            lua_pop(L, 1);
+            first = false;
+        }
+
+        retJson += "]";
+
+        lua_settop(L, top);
+
+        setMultretData((int)L, retJson.c_str(), argIdx);
+
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        lua_settop(L, top);
+        std::string errorJson = "[{\"error\":\"" + std::string(e.what()) + "\"}]";
+        setMultretData((int)L, errorJson.c_str(), argIdx);
+        return 1;
+    }
+}
+
 static void setupState(lua_State* L)
 {
     try
@@ -1291,6 +1488,8 @@ static void setupState(lua_State* L)
         lua_setfield(L, -2, "__index");
         lua_pushcclosurek(L, proxy_newindex, "__newindex", 0, NULL);
         lua_setfield(L, -2, "__newindex");
+        lua_pushcclosurek(L, proxy_iter, "__iter", 0, NULL);
+        lua_setfield(L, -2, "__iter");
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
         lua_pushstring(L, "table");
