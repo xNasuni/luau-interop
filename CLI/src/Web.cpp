@@ -26,6 +26,11 @@
 #define UTAG_JSFUNC (LUA_UTAG_LIMIT - 1)
 #define UTAG_JSOBJECT (LUA_UTAG_LIMIT - 2)
 
+typedef struct
+{
+    const char* ref;
+} jsref_ud;
+
 void fprint(const char* fmt, ...)
 {
     va_list args;
@@ -156,7 +161,7 @@ EM_JS(void, ensureInterop, (), {
     Module.LuaError = LuaError;
     Module.GlueError = GlueError;
     Module.securityTransmitList = Module.securityTransmitList || {};
-    
+
     const AsyncFunction = async function () {}.constructor;
     const GeneratorFunction = function* () {}.constructor;
     const AsyncGeneratorFunction = async function* () {}.constructor;
@@ -307,7 +312,7 @@ EM_JS(void, ensureInterop, (), {
 
         Module.transactionData[argDataKey] = trimmed;
 
-        const status = Module.ccall("luaPcall", 'void', [ 'number', 'number', 'number' ], [ luaFunctionData.state, luaFunctionData.ref, argDataKey ]);
+        const status = Module.ccall("luaPcall", 'number', [ 'number', 'number', 'number' ], [ luaFunctionData.state, luaFunctionData.ref, argDataKey ]);
 
         const multretData = Module.transactionData[argDataKey];
         delete Module.transactionData[argDataKey];
@@ -709,34 +714,29 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         return "{\"type\":\"nil\",\"value\":null}";
     case LUA_TUSERDATA:
     {
-        if (lua_getmetatable(L, index))
+        int tag = lua_userdatatag(L, index);
+        if (tag != UTAG_PROXY && (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT))
         {
-            int tag = lua_userdatatag(L, index);
-            if (tag != UTAG_PROXY && (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT))
+            const char* detectedType = "nil";
+            jsref_ud* ud = (jsref_ud*)lua_touserdata(L, index);
+            if (!ud)
             {
-                const char* detectedType = "nil";
-                if (tag == UTAG_JSFUNC)
-                {
-                    detectedType = "jfunction";
-                }
-                if (tag == UTAG_JSOBJECT)
-                {
-                    detectedType = "jobject";
-                }
-
-                lua_getfield(L, -1, "__index");
-                const char* name = lua_getupvalue(L, -1, 1);
-                if (name && lua_isstring(L, -1))
-                {
-                    std::string result =
-                        std::string("{\"type\":\"") + detectedType + std::string("\",\"value\":") + lua_tostring(L, -1) + std::string("}");
-                    lua_pop(L, 2);
-                    return result;
-                }
-                lua_pop(L, 2);
+                fprinterr("illegal state: invalid userdata for proxy_index");
                 break;
             }
-            lua_pop(L, 1);
+
+            if (tag == UTAG_JSFUNC)
+            {
+                detectedType = "jfunction";
+            }
+            if (tag == UTAG_JSOBJECT)
+            {
+                detectedType = "jobject";
+            }
+
+            std::string result = std::string("{\"type\":\"") + detectedType + std::string("\",\"value\":") + ud->ref + "}";
+
+            return result;
         }
         [[fallthrough]];
     }
@@ -781,8 +781,15 @@ extern "C" int getLuaValue(lua_State* L, int index)
 
 int proxy_index(lua_State* L)
 {
-    const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
+    jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
+    if (!ud || !ud->ref)
+    {
+        fprinterr("illegal state: invalid userdata for proxy_index");
+        lua_pushnil(L);
+        return 1;
+    }
 
+    const char* jsRefIdStr = ud->ref;
     int keyType = lua_type(L, -1);
 
     if (isValueType(keyType) || isReferenceType(keyType))
@@ -811,7 +818,15 @@ int proxy_index(lua_State* L)
 
 int proxy_newindex(lua_State* L)
 {
-    const char* jsRefIdStr = lua_tostring(L, lua_upvalueindex(1));
+    jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
+    if (!ud || !ud->ref)
+    {
+        fprinterr("illegal state: invalid userdata for proxy_index");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const char* jsRefIdStr = ud->ref;
 
     int keyType = lua_type(L, -2);
     int valueType = lua_type(L, -1);
@@ -954,7 +969,16 @@ EM_JS(int, pushRetData, (int L_ptr, int returnDataKey), {
 
 int proxy_call(lua_State* L)
 {
-    const char* jsRefId = lua_tostring(L, lua_upvalueindex(1));
+    jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
+    if (!ud || !ud->ref)
+    {
+        fprinterr("illegal state: invalid userdata for proxy_index");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const char* jsRefIdStr = ud->ref;
+
     int envId = getEnvId(L);
 
     if (envId == -1)
@@ -977,7 +1001,7 @@ int proxy_call(lua_State* L)
     }
     argsJson += "]";
 
-    int returnDataKey = callJSFunction((int)L, envId, jsRefId, argsJson.c_str());
+    int returnDataKey = callJSFunction((int)L, envId, jsRefIdStr, argsJson.c_str());
 
     if (returnDataKey == -1)
     {
@@ -1029,27 +1053,8 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
             return;
         }
 
-        lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSOBJECT);
-
-        lua_newtable(L);
-
-        lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_index, lua_tostring(L, -1), 1, NULL);
-        lua_setfield(L, -2, "__index");
-
-        lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_newindex, lua_tostring(L, -1), 1, NULL);
-        lua_setfield(L, -2, "__newindex");
-
-        lua_pushstring(L, "The metatable is locked");
-        lua_setfield(L, -2, "__metatable");
-
-        lua_pushstring(L, "table");
-        lua_setfield(L, -2, "__type");
-
-        lua_setreadonly(L, -1, true);
-
-        lua_setmetatable(L, -2);
+        jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSOBJECT);
+        ud->ref = strdup(value);
     }
     else if (strcmp(type, "jfunction") == 0)
     {
@@ -1061,27 +1066,8 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
             return;
         }
 
-        lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSFUNC);
-
-        lua_newtable(L);
-
-        lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_index, lua_tostring(L, -1), 1, NULL);
-        lua_setfield(L, -2, "__index");
-
-        lua_pushstring(L, value);
-        lua_pushcclosurek(L, proxy_call, lua_tostring(L, -1), 1, NULL);
-        lua_setfield(L, -2, "__call");
-
-        lua_pushstring(L, "The metatable is locked");
-        lua_setfield(L, -2, "__metatable");
-
-        lua_pushstring(L, "function");
-        lua_setfield(L, -2, "__type");
-
-        lua_setreadonly(L, -1, true);
-
-        lua_setmetatable(L, -2);
+        jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSFUNC);
+        ud->ref = strdup(value);
     }
     else
     {
@@ -1136,45 +1122,64 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx)
 {
     int top = lua_gettop(L);
 
-    if (ref != LUA_NOREF)
+    try
     {
-        lua_getref(L, ref);
-    }
-
-    int nargs = pushArgs((int)L, argIdx);
-
-    int status = lua_pcall(L, nargs, LUA_MULTRET, 0);
-
-    std::string retJson = "[";
-
-    if (status == LUA_OK)
-    {
-        int newTop = lua_gettop(L);
-        int nresults = newTop - top;
-
-        for (int i = 1; i <= nresults; i++)
+        if (ref != LUA_NOREF)
         {
-            int ref = LUA_NOREF;
-            retJson += serializeLuaValue(L, top + i, &ref);
+            lua_getref(L, ref);
+        }
 
-            if (i < nresults)
+        int nargs = pushArgs((int)L, argIdx);
+
+        int status = lua_pcall(L, nargs, LUA_MULTRET, 0);
+
+        std::string retJson = "[";
+
+        if (status == LUA_OK)
+        {
+            int newTop = lua_gettop(L);
+            int nresults = newTop - top;
+
+            for (int i = 1; i <= nresults; i++)
             {
-                retJson += ",";
+                int ref = LUA_NOREF;
+                retJson += serializeLuaValue(L, top + i, &ref);
+
+                if (i < nresults)
+                {
+                    retJson += ",";
+                }
             }
         }
+        else
+        {
+            int ref = LUA_NOREF;
+            retJson += serializeLuaValue(L, -1, &ref);
+        }
+
+        retJson += "]";
+
+        lua_settop(L, top);
+        setMultretData((int)L, retJson.c_str(), argIdx);
+
+        return status;
     }
-    else
+    catch (const std::exception& e)
     {
-        int ref = LUA_NOREF;
-        retJson += serializeLuaValue(L, -1, &ref);
+        lua_settop(L, top);
+        std::string errorJson = "[{\"error\":\"";
+        errorJson += e.what();
+        errorJson += "\"}]";
+        setMultretData((int)L, errorJson.c_str(), argIdx);
+        return LUA_ERRRUN;
     }
-
-    retJson += "]";
-
-    lua_settop(L, top);
-    setMultretData((int)L, retJson.c_str(), argIdx);
-
-    return status;
+    catch (...)
+    {
+        lua_settop(L, top);
+        std::string errorJson = "[{\"error\":\"unknown error\"}]";
+        setMultretData((int)L, errorJson.c_str(), argIdx);
+        return LUA_ERRRUN;
+    }
 }
 
 extern "C" int luaCloneref(lua_State* L, int ref)
@@ -1262,19 +1267,42 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
 
 static void setupState(lua_State* L)
 {
-    luaL_openlibs(L);
+    try
+    {
+        luaL_openlibs(L);
 
-    luaL_sandbox(L);
+        luaL_sandbox(L);
 
-    lua_newtable(L);
-    lua_setreadonly(L, -1, true);
-    L->global->udatamt[UTAG_JSFUNC] = hvalue(L->top - 1);
-    lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushcclosurek(L, proxy_index, "__index", 0, NULL);
+        lua_setfield(L, -2, "__index");
+        lua_pushcclosurek(L, proxy_call, "__call", 0, NULL);
+        lua_setfield(L, -2, "__call");
+        lua_pushstring(L, "The metatable is locked");
+        lua_setfield(L, -2, "__metatable");
+        lua_pushstring(L, "function");
+        lua_setfield(L, -2, "__type");
+        lua_setreadonly(L, -1, true);
+        L->global->udatamt[UTAG_JSFUNC] = hvalue(L->top - 1);
+        lua_pop(L, 1);
 
-    lua_newtable(L);
-    lua_setreadonly(L, -1, true);
-    L->global->udatamt[UTAG_JSOBJECT] = hvalue(L->top - 1);
-    lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushcclosurek(L, proxy_index, "__index", 0, NULL);
+        lua_setfield(L, -2, "__index");
+        lua_pushcclosurek(L, proxy_newindex, "__newindex", 0, NULL);
+        lua_setfield(L, -2, "__newindex");
+        lua_pushstring(L, "The metatable is locked");
+        lua_setfield(L, -2, "__metatable");
+        lua_pushstring(L, "table");
+        lua_setfield(L, -2, "__type");
+        lua_setreadonly(L, -1, true);
+        L->global->udatamt[UTAG_JSOBJECT] = hvalue(L->top - 1);
+        lua_pop(L, 1);
+    }
+    catch (const std::exception& e)
+    {
+        fprinterr("failed to setup interop: %s", e.what());
+    }
 }
 
 extern "C" lua_State* makeLuaState(int envId)
