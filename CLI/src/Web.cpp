@@ -508,11 +508,7 @@ EM_JS(void, ensureInterop, (), {
             return ["nil", "nil"];
         }
         
-        if (!value || typeof value == "undefined") {
-            type = "nil";
-            value = "nil";
-        }
-        else if (typeof value == "number")
+        if (typeof value == "number")
         {
             type = "number";
             value = String(value);
@@ -556,8 +552,7 @@ EM_JS(void, ensureInterop, (), {
                 value = String(Module.getPersistentRef(value, parent, key));
             }
         }
-        else if (value == undefined)
-        {
+        else if (!value || typeof value == "undefined") {
             type = "nil";
             value = "nil";
         } else {
