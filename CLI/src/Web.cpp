@@ -58,6 +58,7 @@ void fprintwarn(const char* fmt, ...)
 
 static std::unordered_map<lua_State*, int> emEnvMap;
 static std::unordered_map<lua_State*, int> emGlobalsMap;
+static std::unordered_map<lua_State*, int> emFakeGlobalsMap;
 static std::unordered_map<const void*, int> refCache;
 
 int getPersistentRef(lua_State* L, int index)
@@ -88,45 +89,37 @@ int getEnvId(lua_State* L)
     return it != emEnvMap.end() ? it->second : -1;
 }
 
-int saveOriginalGlobals(lua_State* L)
+static int saveGlobalsRefToMap(lua_State* L, std::unordered_map<lua_State*, int>& map)
 {
-    if (emGlobalsMap.find(L) != emGlobalsMap.end())
-        return emGlobalsMap[L];
+    auto it = map.find(L);
+    if (it != map.end())
+        return it->second;
 
     lua_pushvalue(L, LUA_GLOBALSINDEX);
     int ref = lua_ref(L, -1);
     lua_pop(L, 1);
-    emGlobalsMap[L] = ref;
+    map[L] = ref;
     return ref;
 }
 
-int getOriginalGlobalsRef(lua_State* L)
+int saveOriginalGlobalsRef(lua_State* L)
 {
-    auto it = emGlobalsMap.find(L);
-    if (it != emGlobalsMap.end())
-        return it->second;
-
-    lua_State* M = lua_mainthread(L);
-    it = emGlobalsMap.find(M);
-    return it != emGlobalsMap.end() ? it->second : -1;
+    return saveGlobalsRefToMap(L, emGlobalsMap);
+}
+int saveSandboxedGlobalsRef(lua_State* L)
+{
+    return saveGlobalsRefToMap(L, emFakeGlobalsMap);
 }
 
 // clang-format off
-EM_JS(void, setEnvFromJS, (int envId, int globalsRef, int L_ptr), {
+EM_JS(void, setEnvFromJS, (int envId, int globalsRef, int fakeGlobalsRef, int L_ptr), {
     if (envId == 0)
     {
         return;
     }
 
     Module.environments[envId] = Module.LuaValue(L_ptr, "ltable", globalsRef);
-    // let env = Module.environments[envId];
-
-    // for (let key in env)
-    // {
-    //     let [type, value] = Module.jsToLuauValue(null, env[key]);
-
-    //     Module.ccall('pushGlobalToLua', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, key, type, value ]);
-    // }
+    Module.environments[envId].set("global", Module.LuaValue(L_ptr, "ltable", fakeGlobalsRef), true);
 });
 
 EM_JS(void, ensureInterop, (), {
@@ -1239,7 +1232,13 @@ extern "C" lua_State* makeLuaState(int envId)
     setupState(L);
 
     // save globals
-    int globalsRef = saveOriginalGlobals(L);
+    int globalsRef = saveOriginalGlobalsRef(L);
+
+    // sandbox thread and globals
+    luaL_sandboxthread(L);
+
+    // save fake globals
+    int fakeGlobalsRef = saveSandboxedGlobalsRef(L);
 
     // check for env (only for web/emscripten)
     ensureInterop();
@@ -1247,11 +1246,8 @@ extern "C" lua_State* makeLuaState(int envId)
     if (envId != 0)
     {
         setEnvId(L, envId);
-        setEnvFromJS(envId, globalsRef, (int)L);
+        setEnvFromJS(envId, globalsRef, fakeGlobalsRef, (int)L);
     }
-
-    // sandbox thread and globals
-    luaL_sandboxthread(L);
 
     return L;
 }
