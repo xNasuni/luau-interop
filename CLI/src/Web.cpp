@@ -446,7 +446,7 @@ EM_JS(void, ensureInterop, (), {
         {
         //--> value types
         case "string":
-            return v.value;
+            return String(v.value).replaceAll("\\u0000", "\0");
         case "number":
             return (typeof v.value == "number" ? v.value : Number(v.value));
         case "boolean":
@@ -766,9 +766,10 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
     }
     case LUA_TSTRING:
     {
-        const char* str = lua_tostring(L, index);
+        size_t len;
+        const char* str = lua_tolstring(L, index, &len);
         std::string escapedStr;
-        for (size_t i = 0; str[i]; i++)
+        for (size_t i = 0; i < len; i++)
         {
             switch (str[i])
             {
@@ -792,6 +793,9 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
                 break;
             case '\t':
                 escapedStr += "\\t";
+                break;
+            case '\0':
+                escapedStr += "\\u0000";
                 break;
             default:
                 if ((unsigned char)str[i] < 32)
