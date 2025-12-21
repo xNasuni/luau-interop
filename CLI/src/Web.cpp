@@ -57,6 +57,7 @@ void fprintwarn(const char* fmt, ...)
 }
 
 static std::unordered_map<lua_State*, int> emEnvMap;
+static std::unordered_map<lua_State*, int> emGlobalsMap;
 static std::unordered_map<const void*, int> refCache;
 
 int getPersistentRef(lua_State* L, int index)
@@ -87,21 +88,45 @@ int getEnvId(lua_State* L)
     return it != emEnvMap.end() ? it->second : -1;
 }
 
+int saveOriginalGlobals(lua_State* L)
+{
+    if (emGlobalsMap.find(L) != emGlobalsMap.end())
+        return emGlobalsMap[L];
+
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+    int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    emGlobalsMap[L] = ref;
+    return ref;
+}
+
+int getOriginalGlobalsRef(lua_State* L)
+{
+    auto it = emGlobalsMap.find(L);
+    if (it != emGlobalsMap.end())
+        return it->second;
+
+    lua_State* M = lua_mainthread(L);
+    it = emGlobalsMap.find(M);
+    return it != emGlobalsMap.end() ? it->second : -1;
+}
+
 // clang-format off
-EM_JS(void, setEnvFromJS, (int envId, int L_ptr), {
+EM_JS(void, setEnvFromJS, (int envId, int globalsRef, int L_ptr), {
     if (envId == 0)
     {
         return;
     }
 
-    let env = Module.environments[envId];
+    Module.environments[envId] = Module.LuaValue(L_ptr, "ltable", globalsRef);
+    // let env = Module.environments[envId];
 
-    for (let key in env)
-    {
-        let [type, value] = Module.jsToLuauValue(null, env[key]);
+    // for (let key in env)
+    // {
+    //     let [type, value] = Module.jsToLuauValue(null, env[key]);
 
-        Module.ccall('pushGlobalToLua', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, key, type, value ]);
-    }
+    //     Module.ccall('pushGlobalToLua', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, key, type, value ]);
+    // }
 });
 
 EM_JS(void, ensureInterop, (), {
@@ -213,8 +238,8 @@ EM_JS(void, ensureInterop, (), {
                 return Module.indexLuaTable(obj, key);
             };
 
-            obj['set'] = function(key, value) {
-                return Module.newIndexLuaTable(obj, key, value);
+            obj['set'] = function(key, value, bypassReadonly = false) {
+                return Module.newIndexLuaTable(obj, key, value, bypassReadonly);
             };
 
             luaValue = new Proxy({}, {
@@ -225,7 +250,7 @@ EM_JS(void, ensureInterop, (), {
                     return Module.indexLuaTable(obj, prop);
                 },
                 set(target, prop, value, receiver) {
-                    return Module.newIndexLuaTable(obj, prop, value);
+                    return Module.newIndexLuaTable(obj, prop, value, false);
                 },
                 has(target, prop) {
                     if (prop in obj) {
@@ -295,7 +320,7 @@ EM_JS(void, ensureInterop, (), {
         return luauValue
     };
 
-    Module.newIndexLuaTable = function(luaTable, key, value) {
+    Module.newIndexLuaTable = function(luaTable, key, value, bypassReadonly = false) {
         const luaTableData = luaTable[Module.LUA_VALUE];
 
         if (luaTableData.released) {
@@ -306,7 +331,7 @@ EM_JS(void, ensureInterop, (), {
         const [KT, KV] = Module.jsToLuauValue(null, key);
         const [VT, VV] = Module.jsToLuauValue(null, value);
 
-        const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV ]);
+        const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly ]);
 
         return modified == 1;
     };
@@ -1151,18 +1176,33 @@ extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV)
     return sendValueToJS(valueJson.c_str());
 }
 
-extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV)
+extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV, bool bypassReadonly)
 {
     lua_getref(L, lref);
+
+    bool wasSetWritable = false;
     if (lua_getreadonly(L, -1) == 1)
     {
-        return false;
+        if (bypassReadonly)
+        {
+            lua_setreadonly(L, -1, 0);
+            wasSetWritable = true;
+        }
+        else
+        {
+            return false;
+        }
     }
 
     pushValueToLua(L, KT, KV, "<indexarg>");
     pushValueToLua(L, VT, VV, "<valuearg>");
 
     lua_rawset(L, -3);
+
+    if (wasSetWritable)
+    {
+        lua_setreadonly(L, -1, 1);
+    }
 
     lua_pop(L, 1);
     return true;
@@ -1198,8 +1238,8 @@ extern "C" lua_State* makeLuaState(int envId)
     // setup state
     setupState(L);
 
-    // sandbox thread
-    luaL_sandboxthread(L);
+    // save globals
+    int globalsRef = saveOriginalGlobals(L);
 
     // check for env (only for web/emscripten)
     ensureInterop();
@@ -1207,8 +1247,11 @@ extern "C" lua_State* makeLuaState(int envId)
     if (envId != 0)
     {
         setEnvId(L, envId);
-        setEnvFromJS(envId, (int)L);
+        setEnvFromJS(envId, globalsRef, (int)L);
     }
+
+    // sandbox thread and globals
+    luaL_sandboxthread(L);
 
     return L;
 }
