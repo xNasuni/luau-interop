@@ -155,6 +155,34 @@ EM_JS(void, ensureInterop, (), {
     Module.FatalJSError = FatalJSError;
     Module.LuaError = LuaError;
     Module.GlueError = GlueError;
+    Module.securityTransmitList = Module.securityTransmitList || {};
+    
+    const AsyncFunction = async function () {}.constructor;
+    const GeneratorFunction = function* () {}.constructor;
+    const AsyncGeneratorFunction = async function* () {}.constructor;
+
+    //code exec
+    Module.securityTransmitList.set(AsyncGeneratorFunction, true);
+    Module.securityTransmitList.set(GeneratorFunction, true);
+    Module.securityTransmitList.set(AsyncFunction, true);
+    Module.securityTransmitList.set(Function, true);
+    Module.securityTransmitList.set(eval, true);
+
+    //nodejs
+    if (typeof require !== "undefined") {
+        Module.securityTransmitList.set(require, true);
+    }
+    if (typeof process !== "undefined") {
+        Module.securityTransmitList.set(process, true);
+    }
+
+    //globals
+    if (typeof global !== "undefined") {
+        Module.securityTransmitList.set(global, true);
+    }
+    if (typeof globalThis !== "undefined") {
+        Module.securityTransmitList.set(globalThis, true);
+    }
 
     Module.fprint = function(...args) {
         console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;15m[info]\x1b[22m", ...args, "\x1b[0m");
@@ -330,6 +358,11 @@ EM_JS(void, ensureInterop, (), {
     };
 
     Module.getPersistentRef = function(jsValue, parent, key) {
+        if (Module.securityTransmitList.has(jsValue)) {
+            Module.fprintwarn("illegal state: can't get persistent ref, js value '%s' is blocked", key ? String(key) : "unknown");
+            return 0;
+        }
+
         if (Module.jsValueReverse.has(jsValue) && Module.jsValueReverse.get(jsValue)?.[Module.JS_VALUE]?.parent == parent) {
             return Module.jsValueReverse.get(jsValue);
         }
@@ -350,7 +383,7 @@ EM_JS(void, ensureInterop, (), {
                 }
             },
             toString() {
-                return "[JsReference " + typeof jsValue + " " + ref + "]";
+                return "[JsReference " + String(typeof(jsValue)) + " " + String(ref) + "]";
             }
         };
 
@@ -379,6 +412,7 @@ EM_JS(void, ensureInterop, (), {
         case "undefined":
             return null;
         //--> reference types
+        case "jsymbol":
         case "jobject":
         case "jfunction":
             if (typeof v.value == "number" && Module.jsValueCache.has(v.value)) {
@@ -426,6 +460,11 @@ EM_JS(void, ensureInterop, (), {
             value = key;
         }
 
+        if (Module.securityTransmitList.has(value)) {
+            Module.fprintwarn(`illegal j2l conversion: js value '${key ? String(key) : "unknown"}' is blocked`);
+            return ["nil", "nil"];
+        }
+        
         if (!value || typeof value == "undefined") {
             type = "nil";
             value = "nil";
@@ -433,21 +472,25 @@ EM_JS(void, ensureInterop, (), {
         else if (typeof value == "number")
         {
             type = "number";
-            value = value.toString();
+            value = String(value);
         }
         else if (typeof value == "string") {
             type = "string";
-            value = value.toString();
+            value = String(value);
         }
         else if (typeof value == "boolean")
         {
             type = "boolean";
-            value = value.toString();
+            value = String(value);
+        }
+        else if (typeof value == "symbol") {
+            type = "jsymbol";
+            value = String(Module.getPersistentRef(value, parent, key));
         }
         else if (typeof value == "function" && !(Module.safeIn(Module.LUA_VALUE, value)) && !(Module.safeIn(Module.JS_VALUE, value)))
         {
             type = "jfunction";
-            value = Module.getPersistentRef(value, parent, key).toString();
+            value = String(Module.getPersistentRef(value, parent, key));
         }
         else if (typeof value == "object" || (Module.safeIn(Module.LUA_VALUE, value) || Module.safeIn(Module.JS_VALUE, value)) || value instanceof Map)
         {
@@ -455,7 +498,7 @@ EM_JS(void, ensureInterop, (), {
                 const data = value[Module.LUA_VALUE];
                 if (!data.released) {
                     type = data.type;
-                    value = data.ref.toString();
+                    value = String(data.ref);
                 } else {
                     Module.fprintwarn("illegal operation: will not pass released reference");
                     type = "nil";
@@ -464,10 +507,10 @@ EM_JS(void, ensureInterop, (), {
             } else if (Module.safeIn(Module.JS_VALUE, value)) {
                 const data = value[Module.JS_VALUE];
                 type = "jobject";
-                value = data.ref.toString();
+                value = String(data.ref);
             } else {
                 type = "jobject";
-                value = Module.getPersistentRef(value, parent, key).toString();
+                value = String(Module.getPersistentRef(value, parent, key));
             }
         }
         else if (value == undefined)
@@ -475,7 +518,7 @@ EM_JS(void, ensureInterop, (), {
             type = "nil";
             value = "nil";
         } else {
-            Module.fprintwarn(`illegal j2l conversion: unsupported type '${typeof value}', defaulted to nil: ${value}`);
+            Module.fprintwarn(`illegal j2l conversion: unsupported type '${typeof value}', defaulted to nil: ${String(value)}`);
             type = "nil";
             value = "nil";
         }
@@ -976,8 +1019,16 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         int ref = atoi(value);
         lua_getref(L, ref);
     }
-    else if (strcmp(type, "jobject") == 0)
+    else if (strcmp(type, "jobject") == 0 || strcmp(type, "jsymbol") == 0)
     {
+        int ref = atoi(value);
+        if (ref == 0)
+        {
+            fprintwarn("illegal push: js %s value '%s' is blocked", type, key ? key : "unknown");
+            lua_pushnil(L);
+            return;
+        }
+
         lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSOBJECT);
 
         lua_newtable(L);
@@ -1002,6 +1053,14 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
     }
     else if (strcmp(type, "jfunction") == 0)
     {
+        int ref = atoi(value);
+        if (ref == 0)
+        {
+            fprintwarn("illegal push: js function value '%s' is blocked", key ? key : "unknown");
+            lua_pushnil(L);
+            return;
+        }
+
         lua_newuserdatataggedwithmetatable(L, 0, UTAG_JSFUNC);
 
         lua_newtable(L);
