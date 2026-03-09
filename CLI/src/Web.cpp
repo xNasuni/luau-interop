@@ -578,6 +578,18 @@ EM_JS(void, ensureInterop, (), {
         case "string":
             return String(v.value).replaceAll("\\u0000", "\0");
         case "number":
+            if (v.value == "inf") {
+                return Infinity
+            };
+            
+            if (v.value == "-inf") {
+                return -Infinity
+            };
+            
+            if (v.value == "nan" || v.value == "-nan") {
+                return NaN
+            };
+
             return (typeof v.value == "number" ? v.value : Number(v.value));
         case "boolean":
             return (typeof v.value == "boolean" ? v.value == true : v.value == "true");
@@ -914,7 +926,7 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         char buf[64];
         lua_Number num = lua_tonumber(L, index);
         snprintf(buf, sizeof(buf), "%.17g", num);
-        return std::string("{\"type\":\"number\",\"value\":") + buf + "}";
+        return std::string("{\"type\":\"number\",\"value\":\"") + buf + "\"}";
     }
     case LUA_TSTRING:
     {
