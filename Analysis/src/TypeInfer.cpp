@@ -29,10 +29,10 @@ LUAU_FASTINTVARIABLE(LuauTypeInferTypePackLoopLimit, 5000)
 LUAU_FASTINTVARIABLE(LuauCheckRecursionLimit, 300)
 LUAU_FASTINTVARIABLE(LuauVisitRecursionLimit, 500)
 LUAU_FASTFLAG(LuauKnowsTheDataModel3)
-LUAU_FASTFLAG(LuauExplicitTypeExpressionInstantiation)
+LUAU_FASTFLAG(LuauExplicitTypeInstantiationSyntax)
+LUAU_FASTFLAGVARIABLE(LuauExplicitTypeInstantiationSupport)
 LUAU_FASTFLAGVARIABLE(DebugLuauFreezeDuringUnification)
 LUAU_FASTFLAG(LuauInstantiateInSubtyping)
-LUAU_FASTFLAG(LuauUseWorkspacePropToChooseSolver)
 
 namespace Luau
 {
@@ -302,10 +302,7 @@ ModulePtr TypeChecker::checkWithoutRecursionCheck(const SourceModule& module, Mo
     normalizer.clearCaches();
     normalizer.arena = nullptr;
 
-    if (FFlag::LuauUseWorkspacePropToChooseSolver)
-        currentModule->clonePublicInterface(builtinTypes, *iceHandler, SolverMode::Old);
-    else
-        currentModule->clonePublicInterface_DEPRECATED(builtinTypes, *iceHandler);
+    currentModule->clonePublicInterface(builtinTypes, *iceHandler, SolverMode::Old);
 
     freeze(currentModule->internalTypes);
     freeze(currentModule->interfaceTypes);
@@ -1928,7 +1925,7 @@ WithPredicate<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExp
         result = checkExpr(scope, *a);
     else if (auto a = expr.as<AstExprInstantiate>())
     {
-        LUAU_ASSERT(FFlag::LuauExplicitTypeExpressionInstantiation);
+        LUAU_ASSERT(FFlag::LuauExplicitTypeInstantiationSyntax);
         result = checkExpr(scope, *a);
     }
     else
@@ -2051,7 +2048,7 @@ WithPredicate<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExp
 std::optional<TypeId> TypeChecker::findTablePropertyRespectingMeta(TypeId lhsType, Name name, const Location& location, bool addErrors)
 {
     ErrorVec errors;
-    auto result = Luau::findTablePropertyRespectingMeta(builtinTypes, errors, lhsType, name, location);
+    auto result = Luau::findTablePropertyRespectingMeta(builtinTypes, errors, lhsType, name, location, /* useNewSolver */ false);
     if (addErrors)
         reportErrors(errors);
     return result;
@@ -3283,7 +3280,8 @@ WithPredicate<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExp
 
 WithPredicate<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExprInstantiate& explicitTypeInstantiation)
 {
-    LUAU_ASSERT(FFlag::LuauExplicitTypeExpressionInstantiation);
+    if (!FFlag::LuauExplicitTypeInstantiationSupport)
+        return WithPredicate{errorRecoveryType(scope)};
 
     WithPredicate<TypeId> baseType = checkExpr(scope, *explicitTypeInstantiation.expr);
 
@@ -4484,7 +4482,7 @@ WithPredicate<TypePackId> TypeChecker::checkExprPackHelper(const ScopePtr& scope
             functionType = *propTy;
             actualFunctionType = instantiate(
                 scope,
-                FFlag::LuauExplicitTypeExpressionInstantiation && expr.typeArguments.size
+                FFlag::LuauExplicitTypeInstantiationSupport && expr.typeArguments.size
                     ? instantiateTypeParameters(scope, functionType, expr.typeArguments, expr.func, expr.location)
                     : functionType,
                 expr.func->location
@@ -5734,7 +5732,7 @@ TypeId TypeChecker::resolveTypeWorker(const ScopePtr& scope, const AstType& anno
             }
         }
 
-        // If we still haven't meterialized an implicit type pack, do it now
+        // If we still haven't materialized an implicit type pack, do it now
         if (typePackParams.empty() && !extraTypes.empty())
             typePackParams.push_back(addTypePack(extraTypes));
 
@@ -6472,7 +6470,7 @@ void TypeChecker::resolve(const IsAPredicate& isaP, RefinementMap& refis, const 
         // If both are subtypes, then we're in one of the two situations:
         //   1. Instance₁ <: Instance₂ ∧ Instance₂ <: Instance₁
         //   2. any <: Instance ∧ Instance <: any
-        // Right now, we have to look at the typeArguments to see if they were undecidables.
+        // Right now, we have to look at the typeArguments to see if they were undecidable.
         // By this point, we also know free tables are also subtypes and supertypes.
         if (optionIsSubtype && targetIsSubtype)
         {

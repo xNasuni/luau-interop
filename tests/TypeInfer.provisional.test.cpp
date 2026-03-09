@@ -11,15 +11,13 @@
 
 using namespace Luau;
 
-LUAU_FASTFLAG(LuauSolverV2)
+LUAU_FASTFLAG(DebugLuauForceOldSolver)
 LUAU_FASTINT(LuauNormalizeCacheLimit)
 LUAU_FASTINT(LuauTarjanChildLimit)
 LUAU_FASTINT(LuauTypeInferIterationLimit)
 LUAU_FASTINT(LuauTypeInferRecursionLimit)
 LUAU_FASTINT(LuauTypeInferTypePackLoopLimit)
-LUAU_FASTFLAG(LuauAddRefinementToAssertions)
 LUAU_FASTFLAG(LuauBetterTypeMismatchErrors)
-LUAU_FASTFLAG(LuauNewOverloadResolver2)
 
 TEST_SUITE_BEGIN("ProvisionalTests");
 
@@ -70,7 +68,7 @@ TEST_CASE_FIXTURE(Fixture, "typeguard_inference_incomplete")
         end
     )";
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         CHECK_EQ(expectedWithNewSolver, decorateWithTypes(code));
     else
         CHECK_EQ(expected, decorateWithTypes(code));
@@ -285,7 +283,7 @@ TEST_CASE_FIXTURE(Fixture, "discriminate_from_x_not_equal_to_nil")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
     {
         CHECK_EQ("{ x: string, y: number }", toString(requireTypeAtPosition({5, 28})));
         CHECK_EQ("{ x: nil, y: nil }", toString(requireTypeAtPosition({7, 28})));
@@ -371,7 +369,7 @@ TEST_CASE_FIXTURE(Fixture, "do_not_ice_when_trying_to_pick_first_of_generic_type
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
     {
         CHECK("() -> ()" == toString(requireType("f")));
         CHECK("() -> ()" == toString(requireType("g")));
@@ -394,7 +392,7 @@ TEST_CASE_FIXTURE(Fixture, "specialization_binds_with_prototypes_too_early")
         local s2s: (string) -> string = id
     )");
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         LUAU_REQUIRE_NO_ERRORS(result);
     else
         LUAU_REQUIRE_ERRORS(result); // Should not have any errors.
@@ -487,7 +485,7 @@ TEST_CASE_FIXTURE(Fixture, "free_is_not_bound_to_any")
 TEST_CASE_FIXTURE(Fixture, "dcr_can_partially_dispatch_a_constraint")
 {
     ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverV2, true},
+        {FFlag::DebugLuauForceOldSolver, false},
     };
 
     CheckResult result = check(R"(
@@ -519,7 +517,7 @@ TEST_CASE_FIXTURE(Fixture, "dcr_can_partially_dispatch_a_constraint")
     // to be solved later.  This should be faster and theoretically less prone
     // to cyclic constraint dependencies.
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         CHECK("(unknown, number) -> ()" == toString(requireType("prime_iter")));
     else
         CHECK("<a>(a, number) -> ()" == toString(requireType("prime_iter")));
@@ -527,7 +525,7 @@ TEST_CASE_FIXTURE(Fixture, "dcr_can_partially_dispatch_a_constraint")
 
 TEST_CASE_FIXTURE(Fixture, "free_options_cannot_be_unified_together")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, true};
 
     TypeArena arena;
     TypeId nilType = getBuiltins()->nilType;
@@ -573,8 +571,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_loop_with_zero_iterators")
 // Ideally, we would not try to export a function type with generic types from incorrect scope
 TEST_CASE_FIXTURE(BuiltinsFixture, "generic_type_leak_to_module_interface")
 {
-    ScopedFastFlag sff{FFlag::LuauNewOverloadResolver2, true};
-
     fileResolver.source["game/A"] = R"(
 local wrapStrictTable
 
@@ -607,7 +603,7 @@ return wrapStrictTable(Constants, "Constants")
     ModulePtr m = getFrontend().moduleResolver.getModule("game/B");
     REQUIRE(m);
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         CHECK_EQ("*error-type*", toString(m->returnType));
     else
     {
@@ -619,8 +615,6 @@ return wrapStrictTable(Constants, "Constants")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "generic_type_leak_to_module_interface_variadic")
 {
-    ScopedFastFlag sff{FFlag::LuauNewOverloadResolver2, true};
-
     fileResolver.source["game/A"] = R"(
 local wrapStrictTable
 
@@ -653,7 +647,7 @@ return wrapStrictTable(Constants, "Constants")
     ModulePtr m = getFrontend().moduleResolver.getModule("game/B");
     REQUIRE(m);
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         CHECK_EQ("*error-type*", toString(m->returnType));
     else
     {
@@ -843,7 +837,7 @@ TEST_CASE_FIXTURE(Fixture, "assign_table_with_refined_property_with_a_similar_ty
         end
     )");
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         LUAU_REQUIRE_NO_ERRORS(result); // This is wrong.  We should be rejecting this assignment.
     else if (FFlag::LuauBetterTypeMismatchErrors)
     {
@@ -892,7 +886,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_with_a_singleton_argument")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         CHECK_EQ("{string}", toString(requireType("t")));
     else
     {
@@ -932,7 +926,7 @@ TEST_CASE_FIXTURE(Fixture, "expected_type_should_be_a_helpful_deduction_guide_fo
         local x: Ref<number?> = useRef(nil)
     )");
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
     {
         // This bug is fixed in the new solver.
         LUAU_REQUIRE_ERROR_COUNT(1, result);
@@ -973,7 +967,7 @@ TEST_CASE_FIXTURE(Fixture, "floating_generics_should_not_be_allowed")
 
 TEST_CASE_FIXTURE(Fixture, "free_options_can_be_unified_together")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, true};
 
     TypeArena arena;
     TypeId nilType = getBuiltins()->nilType;
@@ -1035,7 +1029,7 @@ TEST_CASE_FIXTURE(Fixture, "optional_class_instances_are_invariant_old_solver")
 
 TEST_CASE_FIXTURE(Fixture, "optional_class_instances_are_invariant_new_solver")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     createSomeExternTypes(getFrontend());
 
@@ -1138,7 +1132,7 @@ tbl:f3()
 TEST_CASE_FIXTURE(BuiltinsFixture, "normalization_limit_in_unify_with_any")
 {
     ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverV2, true},
+        {FFlag::DebugLuauForceOldSolver, false},
     };
 
     // With default limit, this test will take 10 seconds in NoOpt
@@ -1173,7 +1167,7 @@ foo(1 :: any)
 
 TEST_CASE_FIXTURE(Fixture, "luau_roact_useState_nilable_state_1")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     CheckResult result = check(R"(
         type Dispatch<A> = (A) -> ()
@@ -1198,7 +1192,7 @@ TEST_CASE_FIXTURE(Fixture, "luau_roact_useState_nilable_state_1")
         end
     )");
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
         LUAU_REQUIRE_NO_ERRORS(result);
     else
     {
@@ -1214,7 +1208,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "luau_roact_useState_minimization")
 {
     // We don't expect this test to work on the old solver, but it also does not yet work on the new solver.
     // So, we can't just put a scoped fast flag here, or it would block CI.
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1332,7 +1326,7 @@ TEST_CASE_FIXTURE(Fixture, "we_cannot_infer_functions_that_return_inconsistently
 #else
     // This is what actually happens right now.
 
-    if (FFlag::LuauSolverV2)
+    if (!FFlag::DebugLuauForceOldSolver)
     {
         LUAU_CHECK_ERROR_COUNT(1, result);
         CHECK("<T>({T}, unknown) -> number" == toString(requireType("find_first")));
@@ -1348,7 +1342,7 @@ TEST_CASE_FIXTURE(Fixture, "we_cannot_infer_functions_that_return_inconsistently
 
 TEST_CASE_FIXTURE(Fixture, "loop_unsoundness")
 {
-    ScopedFastFlag _{FFlag::LuauSolverV2, true};
+    ScopedFastFlag _{FFlag::DebugLuauForceOldSolver, false};
 
     // This is a tactical unsoundness we're introducing to resolve issues around
     // cyclic types. You can see that if this loop were to run more than once,
@@ -1364,7 +1358,7 @@ TEST_CASE_FIXTURE(Fixture, "loop_unsoundness")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "refine_unknown_to_table_and_test_two_props")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     CheckResult result = check(R"(
         local function f(x: unknown): string
@@ -1386,7 +1380,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "refine_unknown_to_table_and_test_two_props")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "function_indexer_satisfies_reading_property")
 {
-    ScopedFastFlag _{FFlag::LuauSolverV2, true};
+    ScopedFastFlag _{FFlag::DebugLuauForceOldSolver, false};
 
     // We would like this code to have _no_ errors, but it requires one of:
     //  (a) Being able to express read-only indexers, as that is the type of
@@ -1411,13 +1405,13 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "function_indexer_satisfies_reading_property"
     LUAU_REQUIRE_ERROR_COUNT(1, result);
     auto err = get<TypeMismatch>(result.errors[0]);
     REQUIRE(err);
-    CHECK_EQ("{ @metatable { __index: (unknown, string) -> number }, {  } }", toString(err->givenType, { /* exhaustive */ true}));
+    CHECK_EQ("{ @metatable { __index: (unknown, string) -> number }, {  } }", toString(err->givenType, {/* exhaustive */ true}));
     CHECK_EQ("{ read X: number }", toString(err->wantedType));
 }
 
 TEST_CASE_FIXTURE(Fixture, "unification_inferring_never_for_refined_param")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local function __remove(__: number?) end
@@ -1437,10 +1431,7 @@ TEST_CASE_FIXTURE(Fixture, "unification_inferring_never_for_refined_param")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "assert_and_many_nested_typeof_contexts")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauAddRefinementToAssertions, true},
-    };
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     CheckResult result = check(R"(
         local foo: unknown = nil :: any
@@ -1455,7 +1446,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "assert_and_many_nested_typeof_contexts")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "bidirectional_inference_variadic_type_pack_read_only_prop")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local foo: { read bar: (...string) -> () } = {
@@ -1473,7 +1464,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "bidirectional_inference_variadic_type_pack_r
 
 TEST_CASE_FIXTURE(Fixture, "indexing_union_of_indexers")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     // CLI-169235: This is just wrong, we should be rejecting this code.
     LUAU_REQUIRE_NO_ERRORS(check(R"(
@@ -1483,12 +1474,11 @@ TEST_CASE_FIXTURE(Fixture, "indexing_union_of_indexers")
             return t[true]
         end
     )"));
-
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "unions_should_work_with_bidirectional_typechecking")
 {
-    ScopedFastFlag newSolver{FFlag::LuauSolverV2, true};
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
 
     CheckResult result = check(R"(
         type dog = { name: string }
@@ -1512,7 +1502,5 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "unions_should_work_with_bidirectional_typech
     CHECK(get<TypeMismatch>(result.errors[0]));
     CHECK(get<TypeMismatch>(result.errors[1]));
 }
-
-
 
 TEST_SUITE_END();

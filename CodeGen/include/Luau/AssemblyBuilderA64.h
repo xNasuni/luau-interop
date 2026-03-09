@@ -44,10 +44,20 @@ public:
     void sub(RegisterA64 dst, RegisterA64 src1, uint16_t src2);
     void neg(RegisterA64 dst, RegisterA64 src);
 
+    // Prevent implicit conversions from happening
+    template<typename T>
+    void add(RegisterA64 dst, RegisterA64 src1, T src2) = delete;
+    template<typename T>
+    void sub(RegisterA64 dst, RegisterA64 src1, T src2) = delete;
+
     // Comparisons
     // Note: some arithmetic instructions also have versions that update flags (ADDS etc) but we aren't using them atm
     void cmp(RegisterA64 src1, RegisterA64 src2);
     void cmp(RegisterA64 src1, uint16_t src2);
+
+    template<typename T>
+    void cmp(RegisterA64 src1, T src2) = delete; // Prevent implicit conversions from happening
+
     void csel(RegisterA64 dst, RegisterA64 src1, RegisterA64 src2, ConditionA64 cond);
     void cset(RegisterA64 dst, ConditionA64 cond);
 
@@ -157,7 +167,9 @@ public:
     void umov_4s(RegisterA64 dst, RegisterA64 src, uint8_t index);
 
     void fcmeq_4s(RegisterA64 dst, RegisterA64 src1, RegisterA64 src2);
+    void fcmgt_4s(RegisterA64 dst, RegisterA64 src1, RegisterA64 src2);
     void bit(RegisterA64 dst, RegisterA64 src, RegisterA64 mask);
+    void bif(RegisterA64 dst, RegisterA64 src, RegisterA64 mask);
 
     // Floating-point rounding and conversions
     void frinta(RegisterA64 dst, RegisterA64 src);
@@ -198,6 +210,7 @@ public:
 
     void logAppend(const char* fmt, ...) LUAU_PRINTF_ATTR(2, 3);
 
+    // Code size is measured in 'code' array units - uint8_t on x64 and uint32_t on arm64
     uint32_t getCodeSize() const;
 
     unsigned getInstructionCount() const;

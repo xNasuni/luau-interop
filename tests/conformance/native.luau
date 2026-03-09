@@ -286,6 +286,19 @@ end
 
 assert(pcall(fuzzfail27))
 
+local function fuzzfail28(...)
+  _,_.n0,_,_,_[_ // _],_[_ + _ % _],_,_,_,_,l255,_,_,_,_,_,_,_,_,_[_],_,_,_ = table.insert("")
+  _,_.n0,_,_,_[_ // _],_[_ + _ % _],_,_,_,_,l255,_,_,_,_,_,_,_,_,_[_],_,_,_ = table.insert("")
+end
+
+assert(pcall(fuzzfail28) == false)
+
+local function fuzzfail29(...)
+  return (vector.create(335572085, 4, 5) // 2) == ...
+end
+
+assert(fuzzfail29() == false)
+
 local function arraySizeInv1()
   local t = {1, 2, nil, nil, nil, nil, nil, nil, nil, true}
 
@@ -519,6 +532,15 @@ local function bufferbounds(zero)
 end
 
 bufferbounds(0)
+
+local function bufferboundsmerge1(b12: buffer, a: number, ...)
+  local r1 = buffer.readi32(b12, a + 8) + buffer.readi32(b12, a + 4) + buffer.readi32(b12, a + 0)
+  assert(r1 == 0)
+
+  assert(is_native())
+end
+
+bufferboundsmerge1(buffer.create(12), 0)
 
 function deadStoreChecks1()
   local a = 1.0

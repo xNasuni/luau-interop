@@ -142,6 +142,12 @@ struct NormalizedExternType
      */
     std::unordered_map<TypeId, TypeIds> externTypes;
 
+    /*
+     * We track an overall collection of shapes that extend this extern type.
+     * This should be interpreted as a big intersection of the given types.
+     */
+    TypeIds shapeExtensions;
+
     /**
      * In order to maintain a consistent insertion order, we use this vector to
      * keep track of it. An ordered std::map will sort by pointer identity,
@@ -277,7 +283,7 @@ struct NormalizedType
     /// Returns true if this type should result in error suppressing behavior.
     bool shouldSuppressErrors() const;
 
-    /// Returns true if this type contains the primitve top table type, `table`.
+    /// Returns true if this type contains the primitive top table type, `table`.
     bool hasTopTable() const;
 
     /// Returns true if this type is `nil` or `nil | *error-type*`
@@ -402,6 +408,7 @@ private:
     TypeId intersectionOfBools(TypeId here, TypeId there);
     void intersectExternTypes(NormalizedExternType& heres, const NormalizedExternType& theres);
     void intersectExternTypesWithExternType(NormalizedExternType& heres, TypeId there);
+    void intersectExternTypesWithShape(NormalizedExternType& heres, TypeId there);
     void intersectStrings(NormalizedStringType& here, const NormalizedStringType& there);
     std::optional<TypeId> intersectionOfTables(TypeId here, TypeId there, SeenTablePropPairs& seenTablePropPairs, Set<TypeId>& seenSet);
     void intersectTablesWithTable(TypeIds& heres, TypeId there, SeenTablePropPairs& seenTablePropPairs, Set<TypeId>& seenSetTypes);

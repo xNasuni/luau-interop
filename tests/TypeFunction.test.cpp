@@ -12,13 +12,13 @@
 
 using namespace Luau;
 
-LUAU_FASTFLAG(LuauSolverV2)
+LUAU_FASTFLAG(DebugLuauForceOldSolver)
 LUAU_DYNAMIC_FASTINT(LuauTypeFamilyApplicationCartesianProductLimit)
 LUAU_FASTFLAG(DebugLuauAssertOnForcedConstraint)
-LUAU_FASTFLAG(LuauBuiltinTypeFunctionsArentGlobal)
-LUAU_FASTFLAG(LuauGetmetatableError)
 LUAU_FASTFLAG(LuauBetterTypeMismatchErrors)
-LUAU_FASTFLAG(LuauSetmetatableWaitForPendingTypes)
+LUAU_FASTFLAG(LuauExplicitTypeInstantiationSyntax)
+LUAU_FASTFLAG(LuauExplicitTypeInstantiationSupport)
+LUAU_FASTFLAG(LuauReworkInfiniteTypeFinder)
 
 struct TypeFunctionFixture : Fixture
 {
@@ -56,7 +56,7 @@ struct TypeFunctionFixture : Fixture
                          }};
 
         unfreeze(getFrontend().globals.globalTypes);
-        TypeId t = getFrontend().globals.globalTypes.addType(GenericType{"T"});
+        TypeId t = getFrontend().globals.globalTypes.addType(GenericType{"T", Polarity::Negative});
         GenericTypeDefinition genericT{t};
 
         ScopePtr globalScope = getFrontend().globals.globalScope;
@@ -70,7 +70,7 @@ TEST_SUITE_BEGIN("TypeFunctionTests");
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "basic_type_function")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -92,7 +92,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "basic_type_function")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "function_as_fn_ret")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -111,7 +111,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "function_as_fn_ret")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "function_as_fn_arg")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -137,7 +137,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "function_as_fn_arg")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "resolve_deep_functions")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -150,7 +150,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "resolve_deep_functions")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "unsolvable_function")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -174,7 +174,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "unsolvable_function")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "table_internal_functions")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -193,7 +193,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "table_internal_functions")
 
 TEST_CASE_FIXTURE(TypeFunctionFixture, "function_internal_functions")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -214,7 +214,7 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "function_internal_functions")
 
 TEST_CASE_FIXTURE(Fixture, "add_function_at_work")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -243,7 +243,7 @@ TEST_CASE_FIXTURE(Fixture, "add_function_at_work")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_add_function_at_work")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -256,7 +256,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_add_function_at_work")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "mul_function_with_union_of_multiplicatives")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     loadDefinition(R"(
@@ -279,7 +279,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "mul_function_with_union_of_multiplicatives")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "mul_function_with_union_of_multiplicatives_2")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     loadDefinition(R"(
@@ -299,7 +299,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "mul_function_with_union_of_multiplicatives_2
 
 TEST_CASE_FIXTURE(Fixture, "internal_functions_raise_errors")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -317,7 +317,7 @@ TEST_CASE_FIXTURE(Fixture, "internal_functions_raise_errors")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_functions_can_be_shadowed")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -342,7 +342,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "type_functions_can_be_shadowed")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_functions_inhabited_with_normalization")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -360,7 +360,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "type_functions_inhabited_with_normalization"
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_works")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -381,7 +381,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_works")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_works_with_metatables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -404,7 +404,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_works_with_metatables")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_single_entry_no_uniontype")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -423,7 +423,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_single_entry_no_uniontype")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_errors_if_it_has_nontable_part")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -441,7 +441,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_errors_if_it_has_nontabl
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_string_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -469,7 +469,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_string_indexer")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_common_subset_if_union_of_differing_tables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -490,7 +490,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_common_subset_if_union_o
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_never_for_empty_table")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -505,7 +505,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_type_function_never_for_empty_table")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_works")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -526,7 +526,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_works")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_ignores_metatables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -549,7 +549,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_ignores_metatables")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_errors_if_it_has_nontable_part")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -567,7 +567,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_errors_if_it_has_nont
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_common_subset_if_union_of_differing_tables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -588,7 +588,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_common_subset_if_unio
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_never_for_empty_table")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -603,7 +603,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawkeyof_type_function_never_for_empty_table
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_works_on_extern_types")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -623,7 +623,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_works_on_extern_types"
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_errors_if_it_has_nonclass_part")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -640,7 +640,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_errors_if_it_has_noncl
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_common_subset_if_union_of_differing_extern_types")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -654,7 +654,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_common_subset_if_union
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_works_with_parent_extern_types_too")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -668,7 +668,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "keyof_type_function_works_with_parent_exte
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "binary_type_function_works_with_default_argument")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -683,7 +683,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "binary_type_function_works_with_default_ar
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "vector2_multiply_is_overloaded")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -706,7 +706,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "vector2_multiply_is_overloaded")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_rfc_example")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -737,7 +737,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_rfc_example")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_oss_crash_gh1161")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -776,7 +776,7 @@ _(setmetatable(_,{[...]=_,}))
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_concat_function_at_work")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -789,7 +789,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_concat_function_at_work")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "exceeded_distributivity_limits")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     ScopedFastInt sfi{DFInt::LuauTypeFamilyApplicationCartesianProductLimit, 10};
@@ -822,7 +822,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "exceeded_distributivity_limits")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "didnt_quite_exceed_distributivity_limits")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     // We duplicate the test here because we want to make sure the test failed
@@ -856,7 +856,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "didnt_quite_exceed_distributivity_limits")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "ensure_equivalence_with_distributivity")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     loadDefinition(R"(
@@ -889,7 +889,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "ensure_equivalence_with_distributivity")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "we_shouldnt_warn_that_a_reducible_type_function_is_uninhabited")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -919,7 +919,7 @@ end
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_of_any_is_any")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -932,7 +932,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_of_any_is_any")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -951,7 +951,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff2")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -972,7 +972,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff2")
 // CLI-148701
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff3")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -999,7 +999,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_should_not_crash_on_cyclic_stuff3")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1022,7 +1022,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_wait_for_pending_no_crash")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1045,7 +1045,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_wait_for_pending_no_crash")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_array")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1060,7 +1060,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_array")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_metatable_should_not_crash_index")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     // t :: t1 where t1 = {metatable {__index: t1, __tostring: (t1) -> string}}
@@ -1083,7 +1083,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cyclic_metatable_should_not_crash_index")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_generic_types")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1105,7 +1105,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_generic_types")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_errors_w_bad_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1121,7 +1121,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_errors_w_bad_indexer")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_on_function_metamethods")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1144,7 +1144,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_on_function_metame
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_on_function_metamethods2")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1164,7 +1164,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_on_function_metame
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_errors_w_var_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1180,7 +1180,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_errors_w_var_indexer")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_union_type_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1198,7 +1198,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_union_type_index
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_union_type_indexee")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1217,7 +1217,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_union_type_index
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_rfc_alternative_section")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1235,7 +1235,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_rfc_alternative_section"
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "index_type_function_works_on_extern_types")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1249,7 +1249,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "index_type_function_works_on_extern_types"
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "index_type_function_works_on_extern_types_with_parents")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1263,7 +1263,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "index_type_function_works_on_extern_types_
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_index_metatables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1289,7 +1289,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "index_type_function_works_w_index_metatables
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1311,7 +1311,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_array")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1325,7 +1325,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_array")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_errors_w_var_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1341,7 +1341,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_errors_w_var_indexer")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_union_type_indexer")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1357,7 +1357,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_union_type_inde
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_union_type_indexee")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1374,7 +1374,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_union_type_inde
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_index_metatables")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1394,7 +1394,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_index_metatable
 
 TEST_CASE_FIXTURE(ExternTypeFixture, "rawget_type_function_errors_w_extern_types")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1407,7 +1407,7 @@ TEST_CASE_FIXTURE(ExternTypeFixture, "rawget_type_function_errors_w_extern_types
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "rawget_type_function_works_w_queried_key_absent")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1437,7 +1437,7 @@ TEST_CASE_FIXTURE(Fixture, "fuzz_len_type_function_follow")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_assigns_correct_metatable")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1455,7 +1455,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_assigns_correct_m
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_assigns_correct_metatable_2")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1479,7 +1479,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_assigns_correct_m
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_metatable_with_metatable_metamethod")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1499,7 +1499,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_metatab
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_invalid_set")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1511,7 +1511,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_invalid
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_nontable_metatable")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1523,7 +1523,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "setmetatable_type_function_errors_on_nontabl
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_type_function_returns_nil_if_no_metatable")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1550,7 +1550,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_type_function_returns_nil_if_no
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1566,7 +1566,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable_for_union")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1591,7 +1591,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable_for_u
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable_for_string")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1612,7 +1612,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_returns_correct_metatable_for_s
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_respects_metatable_metamethod")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1628,7 +1628,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "getmetatable_respects_metatable_metamethod")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_function_correct_cycle_check")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1640,7 +1640,7 @@ type foo<T> = { a: add<T, T>, b : add<T, T> }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "len_typefun_on_metatable")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1657,7 +1657,7 @@ end
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "has_prop_on_irreducible_type_function")
 {
-    ScopedFastFlag newSolver{FFlag::LuauSolverV2, true};
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
 
     CheckResult result = check(R"(
 local test = "a" + "b"
@@ -1674,7 +1674,7 @@ print(test.a)
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "error_suppression_should_work_on_type_functions")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     CheckResult result = check(R"(
@@ -1724,7 +1724,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "fully_dispatch_type_function_that_is_paramet
 TEST_CASE_FIXTURE(BuiltinsFixture, "undefined_add_application")
 {
     ScopedFastFlag sff[] = {
-        {FFlag::LuauSolverV2, true},
+        {FFlag::DebugLuauForceOldSolver, false},
     };
 
     CheckResult result = check(R"(
@@ -1741,7 +1741,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "undefined_add_application")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "keyof_should_not_assert_on_empty_string_props")
 {
-    if (!FFlag::LuauSolverV2)
+    if (FFlag::DebugLuauForceOldSolver)
         return;
 
     loadDefinition(R"(
@@ -1773,7 +1773,7 @@ struct TFFixture
 
     NotNull<BuiltinTypeFunctions> getBuiltinTypeFunctions()
     {
-        return FFlag::LuauBuiltinTypeFunctionsArentGlobal ? NotNull{builtinTypes_.typeFunctions.get()} : NotNull{&builtinTypeFunctions};
+        return NotNull{builtinTypes_.typeFunctions.get()};
     }
 
     ScopePtr globalScope = std::make_shared<Scope>(getBuiltins()->anyTypePack);
@@ -1786,15 +1786,8 @@ struct TFFixture
 
     BuiltinTypeFunctions builtinTypeFunctions;
 
-    TypeFunctionContext tfc_{
-        arena,
-        getBuiltins(),
-        NotNull{globalScope.get()},
-        NotNull{&normalizer},
-        NotNull{&runtime},
-        NotNull{&ice},
-        NotNull{&limits}
-    };
+    TypeFunctionContext
+        tfc_{arena, getBuiltins(), NotNull{globalScope.get()}, NotNull{&normalizer}, NotNull{&runtime}, NotNull{&ice}, NotNull{&limits}};
 
     NotNull<TypeFunctionContext> tfc{&tfc_};
 };
@@ -1828,8 +1821,8 @@ TEST_CASE_FIXTURE(TFFixture, "or<'a, 'b>")
 
 TEST_CASE_FIXTURE(TFFixture, "a_type_function_parameterized_on_generics_is_solved")
 {
-    TypeId a = arena->addType(GenericType{"A"});
-    TypeId b = arena->addType(GenericType{"B"});
+    TypeId a = arena->addType(GenericType{"A", Polarity::Negative});
+    TypeId b = arena->addType(GenericType{"B", Polarity::Negative});
 
     TypeId addTy = arena->addType(TypeFunctionInstanceType{getBuiltinTypeFunctions()->addFunc, {a, b}});
 
@@ -1843,8 +1836,8 @@ TEST_CASE_FIXTURE(TFFixture, "a_type_function_parameterized_on_generics_is_solve
 
 TEST_CASE_FIXTURE(TFFixture, "a_tf_parameterized_on_a_solved_tf_is_solved")
 {
-    TypeId a = arena->addType(GenericType{"A"});
-    TypeId b = arena->addType(GenericType{"B"});
+    TypeId a = arena->addType(GenericType{"A", Polarity::Negative});
+    TypeId b = arena->addType(GenericType{"B", Polarity::Negative});
 
     TypeId innerAddTy = arena->addType(TypeFunctionInstanceType{getBuiltinTypeFunctions()->addFunc, {a, b}});
 
@@ -1860,7 +1853,8 @@ TEST_CASE_FIXTURE(TFFixture, "a_tf_parameterized_on_a_solved_tf_is_solved")
 
 TEST_CASE_FIXTURE(TFFixture, "a_tf_parameterized_on_a_stuck_tf_is_stuck")
 {
-    TypeId innerAddTy = arena->addType(TypeFunctionInstanceType{getBuiltinTypeFunctions()->addFunc, {builtinTypes_.bufferType, builtinTypes_.booleanType}});
+    TypeId innerAddTy =
+        arena->addType(TypeFunctionInstanceType{getBuiltinTypeFunctions()->addFunc, {builtinTypes_.bufferType, builtinTypes_.booleanType}});
 
     TypeId outerAddTy = arena->addType(TypeFunctionInstanceType{getBuiltinTypeFunctions()->addFunc, {builtinTypes_.numberType, innerAddTy}});
 
@@ -1875,7 +1869,7 @@ TEST_CASE_FIXTURE(TFFixture, "a_tf_parameterized_on_a_stuck_tf_is_stuck")
 // We want to make sure that `t1 where t1 = refine<t1, unknown>` becomes `unknown`, not a cyclic type.
 TEST_CASE_FIXTURE(TFFixture, "reduce_degenerate_refinement")
 {
-    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+    ScopedFastFlag sff{FFlag::DebugLuauForceOldSolver, false};
 
     TypeId root = arena->addType(BlockedType{});
     TypeId refinement = arena->addType(
@@ -1895,18 +1889,14 @@ TEST_CASE_FIXTURE(TFFixture, "reduce_degenerate_refinement")
 
 TEST_CASE_FIXTURE(TFFixture, "reduce_union_of_error_nil_table_with_table")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        {FFlag::LuauGetmetatableError, true},
-    };
+    ScopedFastFlag _{FFlag::DebugLuauForceOldSolver, false};
 
-    TypeId refinement = arena->addType(TypeFunctionInstanceType{
-        getBuiltinTypeFunctions()->refineFunc,
-        {
-            arena->addType(UnionType{{builtinTypes_.errorType, builtinTypes_.nilType, builtinTypes_.tableType}}),
-            builtinTypes_.tableType
+    TypeId refinement = arena->addType(
+        TypeFunctionInstanceType{
+            getBuiltinTypeFunctions()->refineFunc,
+            {arena->addType(UnionType{{builtinTypes_.errorType, builtinTypes_.nilType, builtinTypes_.tableType}}), builtinTypes_.tableType}
         }
-    });
+    );
     reduceTypeFunctions(refinement, Location{}, tfc, true);
     CHECK_EQ("*error-type* | table", toString(refinement));
 }
@@ -1951,14 +1941,48 @@ TEST_CASE_FIXTURE(TypeFunctionFixture, "recursive_restraint_violation3")
     CHECK(get<RecursiveRestraintViolation>(result.errors[0]));
 }
 
+TEST_CASE_FIXTURE(Fixture, "recursive_restraint_violation4")
+{
+    ScopedFastFlag _{FFlag::LuauReworkInfiniteTypeFinder, true};
+
+    LUAU_REQUIRE_NO_ERRORS(check(R"(
+        type A = { B<any> }
+
+        type B<T> = { method: (B<T>) -> () }
+    )"));
+}
+
+TEST_CASE_FIXTURE(Fixture, "recursive_restraint_violation_with_defaults")
+{
+    ScopedFastFlag _{FFlag::LuauReworkInfiniteTypeFinder, true};
+
+    // This is a fairly benign example, but the RFC claims it should be disallowed.
+    // See: https://github.com/luau-lang/luau/pull/68.
+    CheckResult result = check(R"(
+        type B<T = number> = { B<number> }
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(get<RecursiveRestraintViolation>(result.errors[0]));
+    // Also check the location (marking the entire alias is bad).
+    CHECK_EQ(Location{{1, 31}, {1, 40}}, result.errors[0].location);
+}
+
+TEST_CASE_FIXTURE(Fixture, "cli_184124_recursive_restraint_violation_from_devforum")
+{
+    ScopedFastFlag _{FFlag::LuauReworkInfiniteTypeFinder, true};
+
+    LUAU_REQUIRE_NO_ERRORS(check(R"(
+        type TypeA<A... = ()> = { Func: (self: TypeA<A...>, func: (A...) -> ()) -> () }
+        type TypeB<A = any> = { Value: TypeA<TypeB<A>> }
+        local value = {} :: TypeB
+    )"));
+}
+
+
 TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2106_wait_for_pending_types_in_setmetatable_ex1")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        // This is the actual fix for this test
-        {FFlag::LuauSetmetatableWaitForPendingTypes, true},
-        {FFlag::DebugLuauAssertOnForcedConstraint, true}
-    };
+    ScopedFastFlag sffs[] = {{FFlag::DebugLuauForceOldSolver, false}, {FFlag::DebugLuauAssertOnForcedConstraint, true}};
 
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local MyClass = {}
@@ -1983,12 +2007,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2106_wait_for_pending_types_in_setmetata
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2106_wait_for_pending_types_in_setmetatable_ex2")
 {
-    ScopedFastFlag sffs[] = {
-        {FFlag::LuauSolverV2, true},
-        // This is the actual fix for this test
-        {FFlag::LuauSetmetatableWaitForPendingTypes, true},
-        {FFlag::DebugLuauAssertOnForcedConstraint, true}
-    };
+    ScopedFastFlag sffs[] = {{FFlag::DebugLuauForceOldSolver, false}, {FFlag::DebugLuauAssertOnForcedConstraint, true}};
 
     LUAU_REQUIRE_NO_ERRORS(check(R"(
         local MyClass = {}
@@ -2011,6 +2030,58 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2106_wait_for_pending_types_in_setmetata
     )"));
 
     CHECK_EQ("string", toString(requireType("g")));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2114_type_instantiation_on_type_function")
+{
+    ScopedFastFlag sffs[] = {
+        {FFlag::DebugLuauForceOldSolver, false},
+        {FFlag::LuauExplicitTypeInstantiationSyntax, true},
+        {FFlag::LuauExplicitTypeInstantiationSupport, true},
+    };
+
+    LUAU_REQUIRE_NO_ERRORS(check(R"(
+        --!strict
+
+        type function id(t: type): type
+            return t
+        end
+
+        local function fn<T>(): id<T>
+            return nil :: any
+        end
+
+        local y = fn<<number>>()
+    )"));
+
+    CHECK_EQ("number", toString(requireType("y")));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "oss_2144_type_instantiation_on_type_function")
+{
+    ScopedFastFlag sffs[] = {
+        {FFlag::DebugLuauForceOldSolver, false},
+        {FFlag::LuauExplicitTypeInstantiationSyntax, true},
+        {FFlag::LuauExplicitTypeInstantiationSupport, true},
+    };
+
+    LUAU_REQUIRE_NO_ERRORS(check(R"(
+        --!strict
+
+        type ST = {
+            Member1: number,
+            Name: string
+        }
+
+        local function access<T>(t, field: T): index<ST, T>
+            return t[field]
+        end
+
+        local t: any = {}
+        local _b = access<<"Member1">>(t, "Member1")
+    )"));
+
+    CHECK_EQ("number", toString(requireType("_b")));
 }
 
 TEST_SUITE_END();
