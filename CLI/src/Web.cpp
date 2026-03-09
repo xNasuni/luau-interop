@@ -369,6 +369,10 @@ EM_JS(void, ensureInterop, (), {
                 return Module.newIndexLuaTable(stateIdx, obj, key, value, bypassReadonly);
             };
 
+            obj['keys'] = function() {
+                return Module.keysLuaTable(stateIdx, obj);
+            };
+
             if (extraProps) {
                  // for .env.global (running scope) and other specials
                 for (const [key, value] of Object.entries(extraProps)) {
@@ -377,7 +381,7 @@ EM_JS(void, ensureInterop, (), {
             }
 
             obj[Symbol.iterator] = function* () {
-                const keys = Module.keysLuaTable(obj);
+                const keys = Module.keysLuaTable(stateIdx, obj);
                 for (const key of keys) {
                     yield [key, Module.indexLuaTable(stateIdx, obj, key)];
                 }
@@ -404,7 +408,7 @@ EM_JS(void, ensureInterop, (), {
                     return Module.indexLuaTable(stateIdx, obj, prop) != null;
                 },
                 ownKeys(target) {
-                    return Module.keysLuaTable(obj);
+                    return Module.keysLuaTable(stateIdx, obj);
                 },
                 getOwnPropertyDescriptor(target, prop) {
                     // const keys = Module.keysLuaTable(obj);
@@ -506,12 +510,14 @@ EM_JS(void, ensureInterop, (), {
             return;
         }
 
-        const transactionIdx = Module.ccall("luaKeys", "number", [ "number", "number" ], [ luaTableData.state, luaTableData.ref ]);
+        const argIdx = Module.states[stateIdx].nextTXKey++;
 
-        const transactionData = Module.transactionData[transactionIdx];
-        delete Module.transactionData[transactionIdx];
+        Module.ccall("luaKeys", "number", [ "number", "number", "number" ], [ luaTableData.state, luaTableData.ref, argIdx ]);
 
-        const luauValue = transactionData.map(v => Module.luauToJsValue(luaTableData.state, v));
+        const transactionData = Module.states[stateIdx].transactionData[argIdx];
+        delete Module.states[stateIdx].transactionData[argIdx];
+
+        const luauValue = transactionData.map(v => Module.luauToJsValue(stateIdx, luaTableData.state, v));
 
         return luauValue;
     };
