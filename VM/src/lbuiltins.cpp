@@ -9,6 +9,7 @@
 #include "lnumutils.h"
 #include "ldo.h"
 #include "lbuffer.h"
+#include "ludata.h"
 
 #include <math.h>
 #include <string.h>
@@ -1211,6 +1212,16 @@ static int luauF_getmetatable(lua_State* L, StkId res, TValue* arg0, int nresult
 {
     if (nparams >= 1 && nresults <= 1)
     {
+        if (ttisuserdata(arg0))
+        {
+            int tag = uvalue(arg0)->tag;
+            if (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT)
+            {
+                setnilvalue(res);
+                return 1;
+            }
+        }
+
         LuaTable* mt = NULL;
         if (ttistable(arg0))
             mt = hvalue(arg0)->metatable;

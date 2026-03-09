@@ -10,6 +10,10 @@
 // special tag value is used for newproxy-created user data (all other user data objects are host-exposed)
 #define UTAG_PROXY (LUA_UTAG_LIMIT + 1)
 
+// special tag values for luau interop
+#define UTAG_JSFUNC (LUA_UTAG_LIMIT - 1)
+#define UTAG_JSOBJECT (LUA_UTAG_LIMIT - 2)
+
 // userdata larger than 16 bytes will be extended to guarantee 16 byte alignment of subsequent blocks
 #define sizeudata(len) (offsetof(Udata, data) + (len > 16 ? ((len + 15) & ~15) : len))
 

@@ -23,9 +23,6 @@
 #include <sstream>
 #include <iomanip>
 
-#define UTAG_JSFUNC (LUA_UTAG_LIMIT - 1)
-#define UTAG_JSOBJECT (LUA_UTAG_LIMIT - 2)
-
 typedef struct
 {
     const char* ref;
@@ -127,9 +124,94 @@ EM_JS(void, setEnvFromJS, (int L_ptr, int envId, int globalsRef, int fakeGlobals
         throw new RuntimeError("no state for env id " + envId);
     }
 
+    const extraKeys = {
+        "global": Module.LuaValue(L_ptr, envId, "ltable", fakeGlobalsRef),
+        "istable": function(value) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                return false
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: istable on released lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: istable on lua value from different env");
+            }
+
+            return data.type == "ltable";
+        },
+        "isfunction": function(value) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                return false
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: isfunction on released lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: isfunction on lua value from different env");
+            }
+
+            return data.type == "lfunction";
+        },
+        "isreadonly": function(value) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                throw new Module.GlueError("illegal state: isreadonly on a non-lua value")
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: isreadonly on released lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: isreadonly on lua value from different env");
+            }
+            if (data.type != "ltable") {
+                throw new Module.GlueError("illegal state: isreadonly on non-table lua value");
+            }
+
+            return Module.ccall('isreadonly', 'boolean', [ 'number', 'number' ], [ L_ptr, data.ref ]);
+        },
+        "setreadonly": function(value, readonly) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                throw new Module.GlueError("illegal state: setreadonly on non-lua value");
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: setreadonly on released lua value");
+            }
+            if (data.type != "ltable") {
+                throw new Module.GlueError("illegal state: setreadonly on non-table lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: setreadonly on lua value from different env");
+            }
+
+            Module.ccall('setreadonly', 'void', [ 'number', 'number', 'boolean' ], [ L_ptr, data.ref, readonly ]);
+        },
+        "getrawmetatable": function(value) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                throw new Module.GlueError("illegal state: isreadonly on a non-lua value")
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: isreadonly on released lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: isreadonly on lua value from different env");
+            }
+            if (data.type != "ltable") {
+                throw new Module.GlueError("illegal state: isreadonly on non-table lua value");
+            }
+        }
+    };
+
     Module.states[envId].env = Module.LuaValue(
-        L_ptr, envId, "ltable", globalsRef,
-        "global", Module.LuaValue(L_ptr, envId, "ltable", fakeGlobalsRef)
+        L_ptr, envId, "ltable", globalsRef, extraKeys
     );
 });
 
@@ -219,7 +301,7 @@ EM_JS(void, ensureInterop, (), {
         console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;1m[error]\x1b[22m", ...args, "\x1b[0m");
     };
 
-    Module.LuaValue = function(state, stateIdx, type, ref, extraKey, extraValue)
+    Module.LuaValue = function(state, stateIdx, type, ref, extraProps)
     {
         if (Module.states[stateIdx].luaValueCache.has(ref))
         {
@@ -287,7 +369,12 @@ EM_JS(void, ensureInterop, (), {
                 return Module.newIndexLuaTable(stateIdx, obj, key, value, bypassReadonly);
             };
 
-            obj[extraKey] = extraValue; // for .env.global (running scope)
+            if (extraProps) {
+                 // for .env.global (running scope) and other specials
+                for (const [key, value] of Object.entries(extraProps)) {
+                    obj[key] = value;
+                }
+            }
 
             obj[Symbol.iterator] = function* () {
                 const keys = Module.keysLuaTable(obj);
@@ -1605,6 +1692,8 @@ static void setupState(lua_State* L)
         lua_setfield(L, -2, "__iter");
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
+        lua_pushnil(L);
+        lua_setfield(L, -2, "__metatable");
         lua_pushstring(L, "table");
         lua_setfield(L, -2, "__type");
         lua_setreadonly(L, -1, true);
@@ -1705,5 +1794,46 @@ extern "C" void luauClose(lua_State* L)
 {
     lua_close(L);
 }
+
+extern "C" bool isreadonly(lua_State* L, int lref)
+{
+    lua_getref(L, lref);
+    bool readonly = lua_getreadonly(L, -1) == 1;
+    lua_pop(L, 1);
+    return readonly;
+}
+
+extern "C" void setreadonly(lua_State* L, int lref, bool readonly)
+{
+    lua_getref(L, lref);
+    lua_setreadonly(L, -1, readonly ? 1 : 0);
+    lua_pop(L, 1);
+}
+
+extern "C" int getrawmetatable(lua_State* L, int lref)
+{
+    lua_getref(L, lref);
+    if (!lua_getmetatable(L, -1))
+    {
+        lua_pop(L, 1);
+        return LUA_NOREF;
+    }
+    int ref = lua_ref(L, -1);
+    lua_pop(L, 2);
+    return ref;
+}
+// extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV, bool bypassReadonly)
+// {
+//     lua_getref(L, lref);
+
+//     bool wasSetWritable = false;
+//     if (lua_getreadonly(L, -1) == 1)
+//     {
+//         if (bypassReadonly)
+//         {
+//             lua_setreadonly(L, -1, 0);
+//             wasSetWritable = true;
+//         }
+//         else
 
 #endif

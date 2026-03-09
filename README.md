@@ -7,6 +7,8 @@ Luau (lowercase u, /ˈlu.aʊ/) is a fast, small, safe, gradually typed embeddabl
 
 This fork is designed to overhaul the interop you get while embedding Luau in a website, Node.JS, or Typescript. For examples and documentation for Web/Node, you can check out [the wiki](https://github.com/xNasuni/luau-web/wiki).
 
+This fork only modifies `Web.cpp`, `lbaselib.cpp`, and `lbuiltins.cpp`.
+
 # Usage
 
 Luau is an embeddable programming language, this fork rewrites the WASM execution API and actually implements interop allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.

@@ -91,13 +91,30 @@ static int luaB_getmetatable(lua_State* L)
         lua_pushnil(L);
         return 1; // no metatable
     }
+
+    int tag = lua_userdatatag(L, 1);
+    printf("1: %s, tag: %d", lua_tostring(L, 1), tag);
+    if (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT)
+    {
+        lua_pushnil(L);
+        return 1; // hidden metatable
+    }
+
     luaL_getmetafield(L, 1, "__metatable");
     return 1; // returns either __metatable field (if present) or metatable
 }
 
 static int luaB_setmetatable(lua_State* L)
 {
+    int tag = lua_userdatatag(L, 1);
+    if (tag == UTAG_JSFUNC || tag == UTAG_JSOBJECT)
+    {
+        luaG_readonlyerror(L);
+        return 1;
+    }
+
     int t = lua_type(L, 2);
+
     luaL_checktype(L, 1, LUA_TTABLE);
     luaL_argexpected(L, t == LUA_TNIL || t == LUA_TTABLE, 2, "nil or table");
     if (luaL_getmetafield(L, 1, "__metatable"))
