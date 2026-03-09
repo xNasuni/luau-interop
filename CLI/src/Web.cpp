@@ -783,7 +783,9 @@ EM_JS(char*, prepareJSKeyList, (int envId, const char* jsRefIdStr), {
     if (data && data[Module.JS_VALUE]) {
         let keys = null;
         if (data[Module.JS_VALUE].value instanceof Map) {
-            keys = Array.from(data[Module.JS_VALUE].value.keys());
+            keys = Array.from(data[Module.JS_VALUE].value.keys()).filter(k =>
+                k !== Module.LUA_VALUE && k !== Module.JS_VALUE && k !== Module.JS_MUTABLE
+            );
         } else if (typeof data[Module.JS_VALUE].value === 'object') {
             keys = Object.keys(data[Module.JS_VALUE].value);
         }
