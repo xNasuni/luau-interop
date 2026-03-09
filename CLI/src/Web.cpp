@@ -811,6 +811,15 @@ EM_JS(char*, prepareJSKeyList, (int envId, const char* jsRefIdStr), {
     return 0;
 });
 
+EM_JS(void, releaseJSKeyList, (int envId, const char* keysRefIdStr), {
+    if (!Module.states[envId]) {
+        throw new RuntimeError("no state for env id " + envId);
+    }
+
+    const keysRefId = UTF8ToString(keysRefIdStr);
+    Module.states[envId].jsValueCache.delete(keysRefId);
+});
+
 EM_JS(int, getJSIteratorNext, (int L_ptr, int envId, const char* jsRefIdStr, const char* keysRefIdStr, int index), {
     if (!Module.states[envId]) {
         throw new RuntimeError("no state for env id " + envId);
@@ -1182,6 +1191,7 @@ int proxy_iter(lua_State* L)
     lua_pushstring(L, keysRefRaw);
     lua_pushinteger(L, 0);
 
+    releaseJSKeyList(envId, keysRefRaw);
     free(keysRefRaw);
 
     lua_pushcclosure(L, proxy_iter_next, "proxy_iter_next", 3);
