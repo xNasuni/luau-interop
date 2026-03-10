@@ -787,6 +787,21 @@ static int luauF_type(lua_State* L, StkId res, TValue* arg0, int nresults, StkId
 {
     if (nparams >= 1 && nresults <= 1)
     {
+        if (ttisuserdata(arg0))
+        {
+            int tag = uvalue(arg0)->tag;
+            if (tag == UTAG_JSFUNC)
+            {
+                setsvalue(L, res, luaS_newliteral(L, "function"));
+                return 1;
+            }
+            if (tag == UTAG_JSOBJECT)
+            {
+                setsvalue(L, res, luaS_newliteral(L, "table"));
+                return 1;
+            }
+        }
+
         int tt = ttype(arg0);
         TString* ttname = L->global->ttname[tt];
 

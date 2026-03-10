@@ -1442,7 +1442,7 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
 
         jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSFUNC);
         ud->ref = strdup(value);
-        lua_pushcclosurek(L, jsfunc_wrapper, "jsfunc_wrapper", 1, NULL);
+        lua_pushcclosurek(L, jsfunc_wrapper, key ? strdup(key) : "", 1, NULL);
 
         const void* closurePtr = lua_topointer(L, -1);
         jsfuncClosureMap[closurePtr] = std::string(value);
@@ -1652,7 +1652,7 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
     }
 
     pushValueToLua(L, KT, KV, "<indexarg>");
-    pushValueToLua(L, VT, VV, "<valuearg>");
+    pushValueToLua(L, VT, VV, KV);
 
     lua_rawset(L, -3);
 
