@@ -66,6 +66,29 @@ endif()
 if(LUAU_BUILD_WEB)
     add_executable(Luau.Web.JSPI)
     add_executable(Luau.Web.Asyncify)
+
+    # separate vm build for Asyncify with longjmp error handling
+    # not the cleanest but its ok
+    add_library(Luau.VM.Asyncify STATIC)
+    target_sources(Luau.VM.Asyncify PRIVATE
+        VM/include/lua.h
+        VM/include/luaconf.h
+        VM/include/lualib.h
+        VM/src/lapi.cpp VM/src/laux.cpp VM/src/lbaselib.cpp VM/src/lbitlib.cpp
+        VM/src/lbuffer.cpp VM/src/lbuflib.cpp VM/src/lbuiltins.cpp VM/src/lcorolib.cpp
+        VM/src/ldblib.cpp VM/src/ldebug.cpp VM/src/ldo.cpp VM/src/lfunc.cpp
+        VM/src/lgc.cpp VM/src/lgcdebug.cpp VM/src/linit.cpp VM/src/lmathlib.cpp
+        VM/src/lmem.cpp VM/src/lnumprint.cpp VM/src/lobject.cpp VM/src/loslib.cpp
+        VM/src/lperf.cpp VM/src/lstate.cpp VM/src/lstring.cpp VM/src/lstrlib.cpp
+        VM/src/ltable.cpp VM/src/ltablib.cpp VM/src/ltm.cpp VM/src/ludata.cpp
+        VM/src/lutf8lib.cpp VM/src/lveclib.cpp VM/src/lvmexecute.cpp VM/src/lvmload.cpp
+        VM/src/lvmutils.cpp
+    )
+    target_compile_features(Luau.VM.Asyncify PRIVATE cxx_std_11)
+    target_include_directories(Luau.VM.Asyncify PUBLIC VM/include)
+    target_link_libraries(Luau.VM.Asyncify PUBLIC Luau.Common)
+    target_compile_options(Luau.VM.Asyncify PRIVATE ${LUAU_OPTIONS} -fno-math-errno)
+    target_compile_definitions(Luau.VM.Asyncify PUBLIC LUA_USE_LONGJMP=1)
 endif()
 
 # Proxy target to make it possible to depend on private VM headers
@@ -273,17 +296,18 @@ if(LUAU_BUILD_WEB)
 
     foreach(WEB_TARGET Luau.Web.JSPI Luau.Web.Asyncify)
         target_compile_options(${WEB_TARGET} PRIVATE ${LUAU_OPTIONS} -D__EMSCRIPTEN__)
-        target_link_libraries(${WEB_TARGET} PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
         target_include_directories(${WEB_TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/VM/src)
         target_link_options(${WEB_TARGET} PRIVATE ${LUAU_WEB_EXPORTED_FUNCTIONS} ${LUAU_WEB_COMMON_LINK_FLAGS})
     endforeach()
 
-    # jspi build native webassembly stack switching
+    # jspi build native webassembly stack switching, uses C++ exceptions via native wasm exception handling
     target_compile_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions)
     target_link_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions -sJSPI -sJSPI_EXPORTS=['luaPcall','makeLuaState'])
+    target_link_libraries(Luau.Web.JSPI PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
 
-    # asyncify build fallback for runtimes without jspi support
+    # asyncify build fallback for runtimes without jspi, uses longjmp error handling
     target_link_options(Luau.Web.Asyncify PRIVATE -sASYNCIFY -sASYNCIFY_STACK_SIZE=65536 -sASSERTIONS)
+    target_link_libraries(Luau.Web.Asyncify PRIVATE Luau.Compiler Luau.VM.Asyncify Luau.Analysis)
 endif()
 
 # validate dependencies for internal libraries
