@@ -1326,9 +1326,9 @@ EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson,
                 try {
                     returnData[0] = func.apply(ctx, args);
                 } catch (e) {
-                    // todo(xNasuni): find better method of detecting constructors
-                    if (e.toString().includes("constructor") &&
-                        e.toString().includes("new")) {
+                    // todo(xNasuni): find better method of detecting constructors, this works though
+                    if (e.toString().toLowerCase().includes("constructor") &&
+                        e.toString().toLowerCase().includes("new")) {
                         returnData[0] = Reflect.construct(func, args);
                     } else {
                         throw e;
