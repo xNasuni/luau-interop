@@ -62,6 +62,7 @@ static std::unordered_map<lua_State*, int> emEnvMap;
 static std::unordered_map<lua_State*, int> emGlobalsMap;
 static std::unordered_map<lua_State*, int> emFakeGlobalsMap;
 static std::unordered_map<const void*, int> refCache;
+static std::unordered_map<const void*, std::string> jsfuncClosureMap;
 
 int getPersistentRef(lua_State* L, int index)
 {
@@ -194,19 +195,26 @@ EM_JS(void, setEnvFromJS, (int L_ptr, int envId, int globalsRef, int fakeGlobals
         },
         "getrawmetatable": function(value) {
             if (!Module.safeIn(Module.LUA_VALUE, value)) {
-                throw new Module.GlueError("illegal state: isreadonly on a non-lua value")
+                throw new Module.GlueError("illegal state: getrawmetatable on a non-lua value")
             }
 
             const data = value[Module.LUA_VALUE];
             if (data.released) {
-                throw new Module.GlueError("illegal state: isreadonly on released lua value");
+                throw new Module.GlueError("illegal state: getrawmetatable on released lua value");
             }
             if (data.stateIdx != envId) {
-                throw new Module.GlueError("illegal state: isreadonly on lua value from different env");
+                throw new Module.GlueError("illegal state: getrawmetatable on lua value from different env");
             }
-            if (data.type != "ltable") {
-                throw new Module.GlueError("illegal state: isreadonly on non-table lua value");
+            if (data.type != "ltable" && data.type != "luserdata") {
+                throw new Module.GlueError("illegal state: getrawmetatable on non-table/userdata lua value");
             }
+
+            const ref = Module.ccall('getrawmetatable', 'number', [ 'number', 'number' ], [ L_ptr, data.ref ]);
+            if (ref < 0) {
+                return null;
+            }
+
+            return Module.LuaValue(L_ptr, envId, "ltable", ref);
         }
     };
 
@@ -1014,6 +1022,17 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
     case LUA_TTHREAD:
     case LUA_TBUFFER:
     {
+        // note(xNasuni): it is possible for a "lua_tfunction" to have a js function closure but still be a "lua_tfunction"
+        if (valueType == LUA_TFUNCTION)
+        {
+            const void* ptr = lua_topointer(L, index);
+            auto jsfuncIt = jsfuncClosureMap.find(ptr);
+            if (jsfuncIt != jsfuncClosureMap.end())
+            {
+                return std::string("{\"type\":\"jfunction\",\"value\":" ) + jsfuncIt->second + "}";
+            }
+        }
+
         const char* typeName = luauTypeName(valueType);
 
         int ref = getPersistentRef(L, index);
@@ -1366,6 +1385,13 @@ int proxy_call(lua_State* L)
     return pushRetData((int)L, envId, returnDataKey);
 }
 
+int jsfunc_wrapper(lua_State* L)
+{
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    return proxy_call(L);
+}
+
 void pushValueToLua(lua_State* L, const char* type, const char* value, const char* key = nullptr)
 {
     if (strcmp(type, "number") == 0)
@@ -1416,6 +1442,10 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
 
         jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSFUNC);
         ud->ref = strdup(value);
+        lua_pushcclosurek(L, jsfunc_wrapper, "jsfunc_wrapper", 1, NULL);
+
+        const void* closurePtr = lua_topointer(L, -1);
+        jsfuncClosureMap[closurePtr] = std::string(value);
     }
     else
     {
@@ -1848,22 +1878,10 @@ extern "C" int getrawmetatable(lua_State* L, int lref)
         lua_pop(L, 1);
         return LUA_NOREF;
     }
+
     int ref = lua_ref(L, -1);
     lua_pop(L, 2);
     return ref;
 }
-// extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV, bool bypassReadonly)
-// {
-//     lua_getref(L, lref);
-
-//     bool wasSetWritable = false;
-//     if (lua_getreadonly(L, -1) == 1)
-//     {
-//         if (bypassReadonly)
-//         {
-//             lua_setreadonly(L, -1, 0);
-//             wasSetWritable = true;
-//         }
-//         else
 
 #endif
