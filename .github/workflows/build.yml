@@ -118,4 +118,5 @@ jobs:
       run: |
         source emsdk/emsdk_env.sh
         emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Release
-        make -j2 Luau.Web
+        make -j2 Luau.Web.JSPI
+        make -j2 Luau.Web.Asyncify

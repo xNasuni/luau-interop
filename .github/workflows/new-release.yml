@@ -78,12 +78,21 @@ jobs:
       run: |
         source emsdk/emsdk_env.sh
         emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Release
-        make -j2 Luau.Web
+        make -j2 Luau.Web.JSPI
+        make -j2 Luau.Web.Asyncify
     - uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: Luau.Web.js
-        asset_name: Luau.Web.js
+        asset_path: Luau.Web.JSPI.js
+        asset_name: Luau.Web.JSPI.js
+        asset_content_type: application/octet-stream
+    - uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: Luau.Web.Asyncify.js
+        asset_name: Luau.Web.Asyncify.js
         asset_content_type: application/octet-stream
