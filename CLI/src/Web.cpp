@@ -268,6 +268,7 @@ EM_JS(void, ensureInterop, (), {
     Module.FatalJSError = FatalJSError;
     Module.LuaError = LuaError;
     Module.GlueError = GlueError;
+    Module.RuntimeError = RuntimeError;
     Module.securityTransmitList = Module.securityTransmitList || {};
 
     if (!Module._asyncMutex) {
@@ -292,6 +293,7 @@ EM_JS(void, ensureInterop, (), {
                 }
             }
         };
+        Module.warnedConcurrent = false;
     }
 
     const AsyncFunction = async function () {}.constructor;
@@ -480,8 +482,9 @@ EM_JS(void, ensureInterop, (), {
 
         Module.states[stateIdx].transactionData[argDataKey] = trimmed;
 
-        if (Module._asyncMutex.enabled && Module._asyncMutex._locked) {
+        if (Module._asyncMutex.enabled && Module._asyncMutex._locked && !Module.warnedConcurrent) {
             Module.fprintwarn("bad state: concurrent lua execution without jspi support, calls will be serialized. see luau-web wiki for details");
+            Module.warnedConcurrent = true;
         }
 
         await Module._asyncMutex.acquire();
@@ -555,6 +558,10 @@ EM_JS(void, ensureInterop, (), {
         const [VT, VV] = Module.jsToLuauValue(stateIdx, null, value);
 
         const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly ]);
+
+        if (!bypassReadonly && !modified) {
+            throw new LuaError("attempt to modify a readonly table");
+        }
 
         return modified == 1;
     };
