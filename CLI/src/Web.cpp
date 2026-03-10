@@ -510,11 +510,11 @@ EM_JS(void, ensureInterop, (), {
         const multretData = Module.states[stateIdx].transactionData[argDataKey];
         delete Module.states[stateIdx].transactionData[argDataKey];
 
-        const argData = multretData.map(v => Module.luauToJsValue(stateIdx, luaFunctionData.state, v));
-
         if (status != 0) {
-            throw new LuaError(argData[0] ? argData[0] : "No output from Luau");
+            throw new LuaError(multretData[0] ? multretData[0].error : "No output from Luau");
         }
+
+        const argData = multretData.map(v => Module.luauToJsValue(stateIdx, luaFunctionData.state, v));
 
         return argData;
     };
@@ -1565,9 +1565,45 @@ EM_JS(void, setMultretData, (int L_int, int envId, const char* multretJson, int 
 })
 // clang-format on
 
+static std::string escapeJsonString(const char* str)
+{
+    std::string escaped;
+    if (!str)
+        return escaped;
+    for (; *str; str++)
+    {
+        switch (*str)
+        {
+        case '"': escaped += "\\\""; break;
+        case '\\': escaped += "\\\\"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default:
+            if ((unsigned char)*str < 32)
+            {
+                char buf[7];
+                snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)*str);
+                escaped += buf;
+            }
+            else
+            {
+                escaped += *str;
+            }
+            break;
+        }
+    }
+    return escaped;
+}
+
 extern "C" int luaPcall(lua_State* L, int ref, int argIdx)
 {
     int top = lua_gettop(L);
+
+    ptrdiff_t savedCi = (char*)L->ci - (char*)L->base_ci;
+    unsigned short savedNcalls = L->nCcalls;
+    unsigned short savedBaseCcalls = L->baseCcalls;
+    StkId savedTopPtr = L->top;
 
     int envId = getEnvId(L);
     if (envId == -1)
@@ -1607,8 +1643,8 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx)
         }
         else
         {
-            int ref = LUA_NOREF;
-            retJson += serializeLuaValue(L, -1, &ref);
+            const char* errMsg = lua_tostring(L, -1);
+            retJson += "{\"error\":\"" + escapeJsonString(errMsg ? errMsg : "unknown error") + "\"}";
         }
 
         retJson += "]";
@@ -1620,17 +1656,33 @@ extern "C" int luaPcall(lua_State* L, int ref, int argIdx)
     }
     catch (const std::exception& e)
     {
+        const char* errMsg = nullptr;
+        if (L->top > savedTopPtr)
+            errMsg = lua_tostring(L, -1);
+
+        L->ci = (CallInfo*)((char*)L->base_ci + savedCi);
+        L->base = L->ci->base;
+        L->nCcalls = savedNcalls;
+        L->baseCcalls = savedBaseCcalls;
+
         lua_settop(L, top);
-        std::string errorJson = "[{\"error\":\"";
-        errorJson += e.what();
-        errorJson += "\"}]";
+        std::string errorJson = "[{\"error\":\"" + escapeJsonString(errMsg ? errMsg : e.what()) + "\"}]";
         setMultretData((int)L, envId, errorJson.c_str(), argIdx);
         return LUA_ERRRUN;
     }
     catch (...)
     {
+        const char* errMsg = nullptr;
+        if (L->top > savedTopPtr)
+            errMsg = lua_tostring(L, -1);
+
+        L->ci = (CallInfo*)((char*)L->base_ci + savedCi);
+        L->base = L->ci->base;
+        L->nCcalls = savedNcalls;
+        L->baseCcalls = savedBaseCcalls;
+
         lua_settop(L, top);
-        std::string errorJson = "[{\"error\":\"unknown error\"}]";
+        std::string errorJson = "[{\"error\":\"" + escapeJsonString(errMsg ? errMsg : "unknown error") + "\"}]";
         setMultretData((int)L, envId, errorJson.c_str(), argIdx);
         return LUA_ERRRUN;
     }
