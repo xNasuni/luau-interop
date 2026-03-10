@@ -269,7 +269,8 @@ EM_JS(void, ensureInterop, (), {
     Module.LuaError = LuaError;
     Module.GlueError = GlueError;
     Module.RuntimeError = RuntimeError;
-    Module.securityTransmitList = Module.securityTransmitList || {};
+    Module.securityTransmitList = Module.securityTransmitList || new Map();
+    Module.options = Module.options || new Map();
 
     if (!Module._asyncMutex) {
         const needsMutex = typeof WebAssembly.Suspending !== "function" || typeof WebAssembly.promising !== "function";
@@ -768,6 +769,47 @@ EM_JS(void, ensureInterop, (), {
         }
 
         return [type, value];
+    };
+
+    Module.tryConvertLuaTableToArray = function(stateIdx, L_ptr, value) {
+        if (!Module.options.get("LUA_IMPLICIT_ARRAYS_TO_JS_ARRAYS")) {
+            return value;
+        }
+
+        if (!Module.safeIn(Module.LUA_VALUE, value)) {
+            return value;
+        }
+
+        const data = value[Module.LUA_VALUE];
+        if (data.type !== "ltable") {
+            return value;
+        }
+
+        const keys = Module.keysLuaTable(stateIdx, value);
+        if (keys.length === 0) {
+            return value;
+        }
+
+        for (const key of keys) {
+            if (typeof key !== "number" || key < 1 || key !== Math.floor(key)) {
+                return value;
+            }
+        }
+
+        keys.sort((a, b) => a - b);
+        for (let i = 0; i < keys.length; i++) {
+            if (keys[i] !== i + 1) {
+                return value;
+            }
+        }
+
+        const arr = [];
+        for (let i = 1; i <= keys.length; i++) {
+            const val = Module.indexLuaTable(stateIdx, value, i);
+            arr.push(Module.tryConvertLuaTableToArray(stateIdx, L_ptr, val));
+        }
+
+        return arr;
     };
 });
 
@@ -1304,7 +1346,10 @@ EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson,
     const rawArgs = JSON.parse(argsStr);
     const actualArgs = rawArgs.slice(1);
 
-    const args = actualArgs.map(arg=>Module.luauToJsValue(envId, L_ptr, arg));
+    const args = actualArgs.map(arg => {
+        const jsValue = Module.luauToJsValue(envId, L_ptr, arg);
+        return Module.tryConvertLuaTableToArray(envId, L_ptr, jsValue);
+    });
 
     const key = JSON.parse(pathStr);
     var trimmed = [];
