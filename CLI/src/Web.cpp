@@ -270,6 +270,30 @@ EM_JS(void, ensureInterop, (), {
     Module.GlueError = GlueError;
     Module.securityTransmitList = Module.securityTransmitList || {};
 
+    if (!Module._asyncMutex) {
+        const needsMutex = typeof WebAssembly.Suspending !== "function" || typeof WebAssembly.promising !== "function";
+        Module._asyncMutex = {
+            _locked: false,
+            _queue: [],
+            enabled: needsMutex,
+            async acquire() {
+                if (!this.enabled) return;
+                if (this._locked) {
+                    await new Promise(resolve => this._queue.push(resolve));
+                }
+                this._locked = true;
+            },
+            release() {
+                if (!this.enabled) return;
+                if (this._queue.length > 0) {
+                    this._queue.shift()();
+                } else {
+                    this._locked = false;
+                }
+            }
+        };
+    }
+
     const AsyncFunction = async function () {}.constructor;
     const GeneratorFunction = function* () {}.constructor;
     const AsyncGeneratorFunction = async function* () {}.constructor;
@@ -439,7 +463,7 @@ EM_JS(void, ensureInterop, (), {
         return luaValue;
     };
 
-    Module.callLuaFunction = function(stateIdx, luaFunction, args) {
+    Module.callLuaFunction = async function(stateIdx, luaFunction, args) {
         if (!Module.states[stateIdx]) {
             throw new RuntimeError("no state for env id " + stateIdx);
         }
@@ -456,7 +480,32 @@ EM_JS(void, ensureInterop, (), {
 
         Module.states[stateIdx].transactionData[argDataKey] = trimmed;
 
-        const status = Module.ccall("luaPcall", 'number', [ 'number', 'number', 'number' ], [ luaFunctionData.state, luaFunctionData.ref, argDataKey ]);
+        if (Module._asyncMutex.enabled && Module._asyncMutex._locked) {
+            Module.fprintwarn("bad state: concurrent lua execution without jspi support, calls will be serialized. see luau-web wiki for details");
+        }
+
+        await Module._asyncMutex.acquire();
+        let status;
+        try {
+            const canUseJSPI =
+                typeof WebAssembly.Suspending === "function" &&
+                typeof WebAssembly.promising === "function" &&
+                typeof Module.luaPcall === "function";
+
+            if (canUseJSPI) {
+                status = await Module.luaPcall(luaFunctionData.state, luaFunctionData.ref, argDataKey);
+            } else {
+                status = await Module.ccall(
+                    "luaPcall",
+                    "number",
+                    [ "number", "number", "number" ],
+                    [ luaFunctionData.state, luaFunctionData.ref, argDataKey ],
+                    { async: true }
+                );
+            }
+        } finally {
+            Module._asyncMutex.release();
+        }
 
         const multretData = Module.states[stateIdx].transactionData[argDataKey];
         delete Module.states[stateIdx].transactionData[argDataKey];
@@ -1237,7 +1286,7 @@ int proxy_iter(lua_State* L)
 }
 
 // clang-format off
-EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const char* argsJson), {
+EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const char* argsJson), {
     if (!Module.states[envId]) {
         throw new RuntimeError("no state for env id " + envId);
     }
@@ -1276,6 +1325,18 @@ EM_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson, const
                         returnData[0] = Reflect.construct(func, args);
                     } else {
                         throw e;
+                    }
+                }
+
+                if (returnData[0] != null && typeof returnData[0] === 'object' && typeof returnData[0].then === 'function') {
+                    try {
+                        returnData[0] = await returnData[0];
+                    } catch (e) {
+                        if (e instanceof Module.FatalJSError) {
+                            throw e;
+                        }
+                        const errorStr = (e && e.toString) ? e.toString() : String(e);
+                        return luaError(errorStr);
                     }
                 }
             } catch (e) {
@@ -1706,7 +1767,6 @@ extern "C" int luaKeys(lua_State* L, int lref, int argIdx)
         }
 
         retJson += "]";
-
         lua_settop(L, top);
 
         setMultretData((int)L, envId, retJson.c_str(), argIdx);

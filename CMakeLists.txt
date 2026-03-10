@@ -64,7 +64,8 @@ if(LUAU_BUILD_TESTS)
 endif()
 
 if(LUAU_BUILD_WEB)
-    add_executable(Luau.Web)
+    add_executable(Luau.Web.JSPI)
+    add_executable(Luau.Web.Asyncify)
 endif()
 
 # Proxy target to make it possible to depend on private VM headers
@@ -145,11 +146,6 @@ if(LUAU_WERROR)
     else()
         list(APPEND LUAU_OPTIONS -Werror) # Warnings are errors
     endif()
-endif()
-
-if(LUAU_BUILD_WEB)
-    # add -fexceptions for emscripten to allow exceptions to be caught in C++
-    list(APPEND LUAU_OPTIONS -fexceptions)
 endif()
 
 set(ISOCLINE_OPTIONS)
@@ -271,22 +267,23 @@ if(LUAU_BUILD_TESTS)
 endif()
 
 if(LUAU_BUILD_WEB)
-    target_compile_options(Luau.Web PRIVATE ${LUAU_OPTIONS} -D__EMSCRIPTEN__)
-    target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
+    # shared options for both web builds
+    set(LUAU_WEB_EXPORTED_FUNCTIONS -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_luaKeys','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free','_isreadonly','_setreadonly','_getrawmetatable'])
+    set(LUAU_WEB_COMMON_LINK_FLAGS -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
 
-    # add internal Luau headers
-    target_include_directories(Luau.Web PRIVATE
-        ${CMAKE_SOURCE_DIR}/VM/src
-    )
+    foreach(WEB_TARGET Luau.Web.JSPI Luau.Web.Asyncify)
+        target_compile_options(${WEB_TARGET} PRIVATE ${LUAU_OPTIONS} -D__EMSCRIPTEN__)
+        target_link_libraries(${WEB_TARGET} PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
+        target_include_directories(${WEB_TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/VM/src)
+        target_link_options(${WEB_TARGET} PRIVATE ${LUAU_WEB_EXPORTED_FUNCTIONS} ${LUAU_WEB_COMMON_LINK_FLAGS})
+    endforeach()
 
-    # declare exported functions to emscripten
-    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_luaKeys','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free','_isreadonly','_setreadonly','_getrawmetatable'] -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
+    # jspi build native webassembly stack switching
+    target_compile_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions)
+    target_link_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions -sJSPI -sJSPI_EXPORTS=['luaPcall','makeLuaState'])
 
-    # add -fexceptions for emscripten to allow exceptions to be caught in C++
-    target_link_options(Luau.Web PRIVATE -fexceptions)
-
-    # the output is a single .js file with an embedded wasm blob
-    target_link_options(Luau.Web PRIVATE -sSINGLE_FILE=1)
+    # asyncify build fallback for runtimes without jspi support
+    target_link_options(Luau.Web.Asyncify PRIVATE -sASYNCIFY -sASYNCIFY_STACK_SIZE=65536 -sASSERTIONS)
 endif()
 
 # validate dependencies for internal libraries

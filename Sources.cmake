@@ -601,9 +601,13 @@ if(TARGET Luau.Require)
     Require/src/RequireNavigator.cpp)
 endif()
 
-if(TARGET Luau.Web)
-    # Luau.Web Sources
-    target_sources(Luau.Web PRIVATE
+if(TARGET Luau.Web.JSPI)
+    target_sources(Luau.Web.JSPI PRIVATE
+        CLI/src/Web.cpp)
+endif()
+
+if(TARGET Luau.Web.Asyncify)
+    target_sources(Luau.Web.Asyncify PRIVATE
         CLI/src/Web.cpp)
 endif()
 
