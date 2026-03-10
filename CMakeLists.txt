@@ -291,7 +291,7 @@ endif()
 
 if(LUAU_BUILD_WEB)
     # shared options for both web builds
-    set(LUAU_WEB_EXPORTED_FUNCTIONS -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_luaKeys','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free','_isreadonly','_setreadonly','_getrawmetatable'])
+    set(LUAU_WEB_EXPORTED_FUNCTIONS -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaPcall','_luaIndex','_luaNewIndex','_luaKeys','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free','_isreadonly','_setreadonly','_getrawmetatable','_setrawmetatable','_createLuaTable'])
     set(LUAU_WEB_COMMON_LINK_FLAGS -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
 
     foreach(WEB_TARGET Luau.Web.JSPI Luau.Web.Asyncify)

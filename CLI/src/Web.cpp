@@ -215,6 +215,58 @@ EM_JS(void, setEnvFromJS, (int L_ptr, int envId, int globalsRef, int fakeGlobals
             }
 
             return Module.LuaValue(L_ptr, envId, "ltable", ref);
+        },
+         "setrawmetatable": function(value, metatable) {
+            if (!Module.safeIn(Module.LUA_VALUE, value)) {
+                throw new Module.GlueError("illegal state: setrawmetatable on a non-lua value")
+            }
+
+            const data = value[Module.LUA_VALUE];
+            if (data.released) {
+                throw new Module.GlueError("illegal state: setrawmetatable on released lua value");
+            }
+            if (data.stateIdx != envId) {
+                throw new Module.GlueError("illegal state: setrawmetatable on lua value from different env");
+            }
+            if (data.type != "ltable" && data.type != "luserdata") {
+                throw new Module.GlueError("illegal state: setrawmetatable on non-table/userdata lua value");
+            }
+
+            let metatableRef = 0;
+            if (metatable != null) {
+                if (typeof metatable != "object") {
+                    throw new Module.GlueError("illegal state: setrawmetatable with a non-object metatable");
+                }
+
+                if (Module.safeIn(Module.LUA_VALUE, metatable)) {
+                    const metatableData = metatable[Module.LUA_VALUE];
+                    if (metatableData.released) {
+                        throw new Module.GlueError("illegal state: setrawmetatable with a released lua value as metatable");
+                    }
+                    if (metatableData.stateIdx != envId) {
+                        throw new Module.GlueError("illegal state: setrawmetatable with a lua value from different env as metatable");
+                    }
+                    if (metatableData.type != "ltable") {
+                        throw new Module.GlueError("illegal state: setrawmetatable with a non-table lua value as metatable");
+                    }
+                    metatableRef = metatableData.ref;
+                } else {
+                    metatableRef = Module.ccall('createLuaTable', 'number', [ 'number' ], [ L_ptr ]);
+                    const mtLuaValue = Module.LuaValue(L_ptr, envId, "ltable", metatableRef);
+                    const entries = metatable instanceof Map
+                        ? Array.from(metatable.entries())
+                        : Object.entries(metatable);
+                    for (const [k, v] of entries) {
+                        Module.newIndexLuaTable(envId, mtLuaValue, k, v, true);
+                    }
+                }
+            }
+
+            Module.ccall('setrawmetatable', 'void', [ 'number', 'number', 'number' ], [ L_ptr, data.ref, metatableRef ]);
+
+            if (metatableRef !== 0) {
+                return Module.LuaValue(L_ptr, envId, "ltable", metatableRef);
+            }
         }
     };
 
@@ -2046,6 +2098,28 @@ extern "C" int getrawmetatable(lua_State* L, int lref)
     int ref = lua_ref(L, -1);
     lua_pop(L, 2);
     return ref;
+}
+
+extern "C" int createLuaTable(lua_State* L)
+{
+    lua_newtable(L);
+    int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    return ref;
+}
+
+extern "C" int setrawmetatable(lua_State* L, int lref, int mtRef)
+{
+    lua_getref(L, lref);
+    lua_getref(L, mtRef);
+    if (lua_setmetatable(L, -2) == 0)
+    {
+        lua_pop(L, 2);
+        return LUA_NOREF;
+    }
+
+    lua_pop(L, 2);
+    return mtRef;
 }
 
 #endif
