@@ -612,7 +612,7 @@ EM_JS(void, ensureInterop, (), {
 
         const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly ]);
 
-        if (!bypassReadonly && !modified) {
+        if (!bypassReadonly && !modified && !Module.options.get("LUA_NONSTRICT_READONLY")) {
             throw new LuaError("attempt to modify a readonly table");
         }
 
