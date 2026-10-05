@@ -468,6 +468,38 @@ EM_JS(void, ensureInterop, (), {
                 }
             }
 
+            obj['has'] = function(key) {
+                return Module.indexLuaTable(stateIdx, obj, key) != null;
+            };
+
+            obj['delete'] = function(key) {
+                const existed = obj['has'](key);
+                Module.newIndexLuaTable(stateIdx, obj, key, null, false);
+                return existed;
+            };
+
+            obj['values'] = function* () {
+                for (const key of Module.keysLuaTable(stateIdx, obj)) {
+                    yield Module.indexLuaTable(stateIdx, obj, key);
+                }
+            };
+
+            obj['entries'] = function* () {
+                for (const key of Module.keysLuaTable(stateIdx, obj)) {
+                    yield [key, Module.indexLuaTable(stateIdx, obj, key)];
+                }
+            };
+
+            obj['forEach'] = function(callback, thisArg) {
+                for (const [key, value] of obj['entries']()) {
+                    callback.call(thisArg, value, key, luaValue);
+                }
+            };
+
+            Object.defineProperty(obj, 'size', {
+                get() { return Module.keysLuaTable(stateIdx, obj).length; }
+            });
+
             obj[Symbol.iterator] = function* () {
                 const keys = Module.keysLuaTable(stateIdx, obj);
                 for (const key of keys) {
@@ -475,17 +507,52 @@ EM_JS(void, ensureInterop, (), {
                 }
             };
             
+            const warnedCollisions = new Set();
+            const warnKeyCollision = (prop) => {
+                if (warnedCollisions.has(prop) || Module.indexLuaTable(stateIdx, obj, prop) == null) {
+                    return;
+                }
+
+                warnedCollisions.add(prop);
+                Module.fprintwarn(`ambiguous index: table has both number key ${prop} and string key "${prop}", use .get(${prop}) or .get("${prop}") to choose. use .get(value) always`);
+            };
+
+            const warnReferenceKey = (prop) => {
+                if (typeof prop != "string" || !prop.startsWith("[LuaReference ") || warnedCollisions.has(prop)) {
+                    return;
+                }
+
+                warnedCollisions.add(prop);
+                const refType = prop.split(" ")[1].replace(/^l/, "");
+                Module.fprintwarn(`ambiguous index: [] was given a lua ${refType} reference, property access forces string keys. use .get(value) always`);
+            };
+
             luaValue = new Proxy({}, {
+                // msg(xNasuni): this really shouldn't be used by people, hopefully these warnings will deter them
                 get(target, prop, receiver) {
                     if (prop === Symbol.iterator || prop in obj) {
                         return obj[prop];
                     }
+                    warnReferenceKey(prop);
                     if (prop in obj) {
                         return obj[prop];
+                    }
+
+                    if (Module.isIndexKey(prop)) {
+                        const value = Module.indexLuaTable(stateIdx, obj, Number(prop));
+                        if (value != null) {
+                            warnKeyCollision(prop);
+                            return value;
+                        }
                     }
                     return Module.indexLuaTable(stateIdx, obj, prop);
                 },
                 set(target, prop, value, receiver) {
+                    warnReferenceKey(prop);
+                    if (Module.isIndexKey(prop) && Module.indexLuaTable(stateIdx, obj, Number(prop)) != null) {
+                        warnKeyCollision(prop);
+                        return Module.newIndexLuaTable(stateIdx, obj, Number(prop), value, false);
+                    }
                     return Module.newIndexLuaTable(stateIdx, obj, prop, value, false);
                 },
                 has(target, prop) {
@@ -493,6 +560,10 @@ EM_JS(void, ensureInterop, (), {
                         return true;
                     }
                     
+                    warnReferenceKey(prop);
+                    if (Module.isIndexKey(prop) && Module.indexLuaTable(stateIdx, obj, Number(prop)) != null) {
+                        return true;
+                    }
                     return Module.indexLuaTable(stateIdx, obj, prop) != null;
                 },
                 ownKeys(target) {
@@ -592,6 +663,10 @@ EM_JS(void, ensureInterop, (), {
         const argData = multretData.map(v => Module.luauToJsValue(stateIdx, luaFunctionData.state, v));
 
         return argData;
+    };
+
+    Module.isIndexKey = function(prop) {
+        return typeof prop == "string" && /^(0|[1-9][0-9]*)$/.test(prop) && Number.isSafeInteger(Number(prop));
     };
 
     Module.indexLuaTable = function(stateIdx, luaTable, key) {
@@ -892,6 +967,8 @@ EM_JS(void, ensureInterop, (), {
             const val = Module.indexLuaTable(stateIdx, value, i);
             arr.push(Module.tryConvertLuaTableToArray(stateIdx, L_ptr, val));
         }
+
+        Object.defineProperty(arr, Module.LUA_VALUE, { value: data });
 
         return arr;
     };
@@ -1534,7 +1611,7 @@ EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson,
             // possibly re-enable in the future for long term applications
             // args.forEach(arg => arg?.[Module.LUA_VALUE]?.release?.());
 
-            trimmed = Array.isArray(returnData[0]) ? [...returnData[0]] : [returnData[0]];
+            trimmed = Array.isArray(returnData[0]) && !Module.safeIn(Module.LUA_VALUE, returnData[0]) ? [...returnData[0]] : [returnData[0]];
         } else {
             Module.fprintwarn("illegal state: no js val found for path", pathStr);
             return Module.luaError(L_ptr, 'illegal state');
