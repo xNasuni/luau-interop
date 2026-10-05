@@ -33,7 +33,7 @@ void fprint(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "\x1b[1;38;5;13m[luau-web] \x1b[38;5;15m[info] \x1b[22m");
+    fprintf(stderr, "\x1b[1;38;5;13m[luau-interop] \x1b[38;5;15m[info] \x1b[22m");
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\x1b[0m\n");
     va_end(args);
@@ -43,7 +43,7 @@ void fprinterr(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "\x1b[1;38;5;13m[luau-web] \x1b[38;5;1m[error] \x1b[22m");
+    fprintf(stderr, "\x1b[1;38;5;13m[luau-interop] \x1b[38;5;1m[error] \x1b[22m");
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\x1b[0m\n");
     va_end(args);
@@ -53,7 +53,7 @@ void fprintwarn(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "\x1b[1;38;5;13m[luau-web] \x1b[38;5;11m[warn] \x1b[22m");
+    fprintf(stderr, "\x1b[1;38;5;13m[luau-interop] \x1b[38;5;11m[warn] \x1b[22m");
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\x1b[0m\n");
     va_end(args);
@@ -378,15 +378,15 @@ EM_JS(void, ensureInterop, (), {
     }
 
     Module.fprint = function(...args) {
-        console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;15m[info]\x1b[22m", ...args, "\x1b[0m");
+        console.error("\x1b[1;38;5;13m[luau-interop] \x1b[38;5;15m[info]\x1b[22m", ...args, "\x1b[0m");
     };
     
     Module.fprintwarn = function(...args) {
-        console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;11m[warn]\x1b[22m", ...args, "\x1b[0m");
+        console.error("\x1b[1;38;5;13m[luau-interop] \x1b[38;5;11m[warn]\x1b[22m", ...args, "\x1b[0m");
     };
 
     Module.fprinterr = function(...args) {
-        console.error("\x1b[1;38;5;13m[luau-web] \x1b[38;5;1m[error]\x1b[22m", ...args, "\x1b[0m");
+        console.error("\x1b[1;38;5;13m[luau-interop] \x1b[38;5;1m[error]\x1b[22m", ...args, "\x1b[0m");
     };
 
     Module.LuaValue = function(state, stateIdx, type, ref, extraProps)
