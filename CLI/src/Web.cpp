@@ -1121,6 +1121,13 @@ EM_JS(char*, prepareJSKeyList, (int L_ptr, int envId, const char* jsRefIdStr), {
     return 0;
 });
 
+EM_JS(int, getJSLength, (int L_ptr, int envId, const char* jsRefIdStr), {
+    const data = Module.states[envId].jsValueCache.get(JSON.parse(UTF8ToString(jsRefIdStr)));
+    const value = data?.[Module.JS_VALUE]?.value;
+
+    return Array.isArray(value) ? value.length : Module.luaError(L_ptr, "attempt to get length of a non-array value");
+});
+
 EM_JS(void, releaseJSKeyList, (int envId, const char* keysRefIdStr), {
     if (!Module.states[envId]) {
         throw new RuntimeError("no state for env id " + envId);
@@ -1416,6 +1423,27 @@ int proxy_index(lua_State* L)
         lua_pop(L, 1);
         return 0;
     }
+}
+
+int proxy_len(lua_State* L)
+{
+    jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
+    int envId = getEnvId(L);
+    if (!ud || !ud->ref || envId == -1)
+    {
+        fprinterr("illegal state: invalid userdata or environment for proxy_len");
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    int length = getJSLength((int)L, envId, ud->ref);
+    if (length < 0)
+    {
+        lua_error(L);
+    }
+
+    lua_pushinteger(L, length);
+    return 1;
 }
 
 int proxy_newindex(lua_State* L)
@@ -2144,6 +2172,8 @@ static void setupState(lua_State* L)
         lua_setfield(L, -2, "__newindex");
         lua_pushcclosurek(L, proxy_iter, "__iter", 0, NULL);
         lua_setfield(L, -2, "__iter");
+        lua_pushcclosurek(L, proxy_len, "__len", 0, NULL);
+        lua_setfield(L, -2, "__len");
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
         lua_pushnil(L);
