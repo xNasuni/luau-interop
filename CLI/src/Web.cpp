@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
+#include <cinttypes>
 
 typedef struct
 {
@@ -513,6 +514,24 @@ EM_JS(void, ensureInterop, (), {
             });
         };
 
+        if (type == "lvector") {
+            const components = { x: 0, y: 1, z: 2 };
+            luaValue = new Proxy(obj, {
+                get(target, prop, receiver) {
+                    if (typeof prop == "string" && Object.hasOwn(components, prop.toLowerCase())) {
+                        if (obj[Module.LUA_VALUE].released) {
+                            throw new GlueError("attempt to index released vector");
+                        }
+                        return Math.fround(Module.ccall("luaVectorComponent", "number", [ "number", "number", "number" ], [ state, ref, components[prop.toLowerCase()] ]));
+                    }
+                    return Reflect.get(target, prop, receiver);
+                },
+                set() {
+                    throw new LuaError("attempt to modify a vector");
+                }
+            });
+        };
+
         Module.states[stateIdx].luaValueCache.set(ref, luaValue);
 
         return luaValue;
@@ -708,6 +727,8 @@ EM_JS(void, ensureInterop, (), {
             };
 
             return (typeof v.value == "number" ? v.value : Number(v.value));
+        case "integer":
+            return BigInt(v.value);
         case "boolean":
             return (typeof v.value == "boolean" ? v.value == true : v.value == "true");
         case "nil":
@@ -717,6 +738,7 @@ EM_JS(void, ensureInterop, (), {
         case "jsymbol":
         case "jobject":
         case "jfunction":
+        case "jvector":
             if (typeof v.value == "number" && Module.states[stateIdx].jsValueCache.has(v.value)) {
                 const jsValue = Module.states[stateIdx].jsValueCache.get(v.value);
                 if (jsValue && Module.safeIn(Module.JS_VALUE, jsValue)) {
@@ -730,6 +752,7 @@ EM_JS(void, ensureInterop, (), {
         case "userdata":
         case "thread":
         case "buffer":
+        case "vector":
         {
             const ref = parseInt(v.value, 10);
             return Module.LuaValue(L_ptr, stateIdx, "l" + v.type, ref);
@@ -771,6 +794,15 @@ EM_JS(void, ensureInterop, (), {
         {
             type = "number";
             value = String(value);
+        }
+        else if (typeof value == "bigint")
+        {
+            type = "integer";
+            const wrapped = BigInt.asIntN(64, value);
+            if (wrapped !== value) {
+                Module.fprintwarn(`scary j2l conversion: bigint '${key ? String(key) : "unknown"}' is out of int64 range, wrapped to ${wrapped}`);
+            }
+            value = wrapped.toString();
         }
         else if (typeof value == "string") {
             type = "string";
@@ -1064,7 +1096,7 @@ bool isReferenceType(int kind)
 
 bool isValueType(int kind)
 {
-    return kind == LUA_TNIL || kind == LUA_TBOOLEAN || kind == LUA_TNUMBER || kind == LUA_TSTRING;
+    return kind == LUA_TNIL || kind == LUA_TBOOLEAN || kind == LUA_TNUMBER || kind == LUA_TINTEGER || kind == LUA_TSTRING;
 }
 
 const char* luauTypeName(int kind)
@@ -1077,6 +1109,8 @@ const char* luauTypeName(int kind)
         return "boolean";
     case LUA_TNUMBER:
         return "number";
+    case LUA_TINTEGER:
+        return "integer";
     case LUA_TSTRING:
         return "string";
     case LUA_TTABLE:
@@ -1110,6 +1144,13 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         lua_Number num = lua_tonumber(L, index);
         snprintf(buf, sizeof(buf), "%.17g", num);
         return std::string("{\"type\":\"number\",\"value\":\"") + buf + "\"}";
+    }
+    case LUA_TINTEGER:
+    {
+        char buf[32];
+        int64_t num = lua_tointeger64(L, index, nullptr);
+        snprintf(buf, sizeof(buf), "%" PRId64, num);
+        return std::string("{\"type\":\"integer\",\"value\":\"") + buf + "\"}";
     }
     case LUA_TSTRING:
     {
@@ -1196,6 +1237,7 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
     case LUA_TFUNCTION:
     case LUA_TTHREAD:
     case LUA_TBUFFER:
+    case LUA_TVECTOR:
     {
         // note(xNasuni): it is possible for a "lua_tfunction" to have a js function closure but still be a "lua_tfunction"
         if (valueType == LUA_TFUNCTION)
@@ -1601,6 +1643,10 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         lua_Number n = atof(value);
         lua_pushnumber(L, n);
     }
+    else if (strcmp(type, "integer") == 0)
+    {
+        lua_pushinteger64(L, strtoll(value, nullptr, 10));
+    }
     else if (strcmp(type, "string") == 0)
     {
         lua_pushstring(L, value);
@@ -1613,8 +1659,7 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
     {
         lua_pushnil(L);
     }
-    else if (strcmp(type, "ltable") == 0 || strcmp(type, "lfunction") == 0 || strcmp(type, "luserdata") == 0 || strcmp(type, "lthread") == 0 ||
-             strcmp(type, "lbuffer") == 0)
+    else if (strcmp(type, "ltable") == 0 || strcmp(type, "lfunction") == 0 || strcmp(type, "luserdata") == 0 || strcmp(type, "lthread") == 0 || strcmp(type, "lbuffer") == 0 || strcmp(type, "lvector") == 0)
     {
         int ref = atoi(value);
         lua_getref(L, ref);
@@ -1844,6 +1889,15 @@ extern "C" int luaCloneref(lua_State* L, int ref)
     lua_getref(L, ref);
     int persistentRef = lua_ref(L, -1);
     return persistentRef;
+}
+
+extern "C" float luaVectorComponent(lua_State* L, int ref, int component)
+{
+    lua_getref(L, ref);
+    const float* v = lua_tovector(L, -1);
+    float result = (v && component >= 0 && component < 3) ? v[component] : 0.0f;
+    lua_pop(L, 1);
+    return result;
 }
 
 extern "C" void luaUnref(lua_State* L, int ref)
