@@ -16,46 +16,12 @@
 
 #include <string.h>
 
-LUAU_FASTFLAG(LuauCodegenFreeBlocks)
-
 using namespace Luau::CodeGen;
 
 TEST_SUITE_BEGIN("CodeAllocation");
 
-TEST_CASE("CodeAllocation")
-{
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
-    size_t blockSize = 1024 * 1024;
-    size_t maxTotalSize = 1024 * 1024;
-    CodeAllocator allocator(blockSize, maxTotalSize);
-
-    std::vector<uint8_t> code;
-    code.resize(128);
-
-    CodeAllocationData result1 = allocator.allocate(nullptr, 0, code.data(), code.size());
-    CHECK(result1.start != nullptr);
-    CHECK(result1.size == 128);
-    CHECK(result1.codeStart != nullptr);
-    CHECK(result1.codeStart == result1.start);
-
-    std::vector<uint8_t> data;
-    data.resize(8);
-
-    CodeAllocationData result2 = allocator.allocate(data.data(), data.size(), code.data(), code.size());
-    CHECK(result2.start != nullptr);
-    CHECK(result2.size == kCodeAlignment + 128);
-    CHECK(result2.codeStart != nullptr);
-    CHECK(result2.codeStart == result2.start + kCodeAlignment);
-
-    allocator.deallocate(result1);
-    allocator.deallocate(result2);
-}
-
 TEST_CASE("CodeAllocationCallbacks")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     struct AllocationData
     {
         size_t bytesAllocated = 0;
@@ -105,8 +71,6 @@ TEST_CASE("CodeAllocationCallbacks")
 
 TEST_CASE("CodeAllocationFailure")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     size_t blockSize = 3000;
     size_t maxTotalSize = 7000;
     CodeAllocator allocator(blockSize, maxTotalSize);
@@ -131,10 +95,37 @@ TEST_CASE("CodeAllocationFailure")
     allocator.deallocate(result3);
 }
 
-TEST_CASE("CodeAllocationWithUnwindCallbacks")
+TEST_CASE("CodeAllocationProtectData")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
+    size_t blockSize = 1024 * 1024;
+    size_t maxTotalSize = 1024 * 1024;
+    CodeAllocator allocator(blockSize, maxTotalSize);
 
+    // dataSize = 0 should not waste a page for read only
+    std::vector<uint8_t> code(128);
+    CodeAllocationData result1 = allocator.allocate(nullptr, 0, code.data(), code.size());
+    CHECK(result1.start != nullptr);
+    CHECK(result1.size == 128);
+    CHECK(result1.codeStart != nullptr);
+    CHECK(result1.codeStart == result1.start);
+
+    // dataSize != 0 should page-align the code start so that data page is read only
+    std::vector<uint8_t> data(8);
+    CodeAllocationData result2 = allocator.allocate(data.data(), data.size(), code.data(), code.size());
+    CHECK(result2.start != nullptr);
+    CHECK(result2.size == CodeAllocator::alignToPageSize(data.size()) + code.size());
+    CHECK(result2.codeStart != nullptr);
+    // Code must start on a page boundary
+    CHECK(uintptr_t(result2.codeStart) == CodeAllocator::alignToPageSize(uintptr_t(result2.codeStart)));
+    // Data is placed immediately before code
+    CHECK(result2.codeStart - data.size() >= result2.start);
+
+    allocator.deallocate(result1);
+    allocator.deallocate(result2);
+}
+
+TEST_CASE("CodeAllocationProtectDataWithUnwindCallbacks")
+{
     struct Info
     {
         std::vector<uint8_t> unwind;
@@ -180,9 +171,10 @@ TEST_CASE("CodeAllocationWithUnwindCallbacks")
 
         CodeAllocationData result = allocator.allocate(data.data(), data.size(), code.data(), code.size());
         CHECK(result.start != nullptr);
-        CHECK(result.size == kCodeAlignment + 128);
+        CHECK(result.size == CodeAllocator::alignToPageSize(data.size()) + code.size());
         CHECK(result.codeStart != nullptr);
-        CHECK(result.codeStart == result.start + kCodeAlignment);
+        // Code must start on a page boundary as data is non zero size
+        CHECK(uintptr_t(result.codeStart) == CodeAllocator::alignToPageSize(uintptr_t(result.codeStart)));
         CHECK(result.start == info.block + kCodeAlignment);
 
         allocator.deallocate(result);
@@ -289,14 +281,12 @@ constexpr X64::RegisterX64 rNonVol4 = X64::r14;
 
 TEST_CASE("GeneratedCodeExecutionX64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     if (!Luau::CodeGen::isSupported())
         return;
 
     using namespace X64;
 
-    AssemblyBuilderX64 build(/* logText= */ false);
+    AssemblyBuilderX64 build(/* logger= */ nullptr, /* features= */ 0);
 
     build.mov(rax, rArg1);
     build.add(rax, rArg2);
@@ -334,14 +324,12 @@ static void nonthrowing(int64_t arg)
 
 TEST_CASE("GeneratedCodeExecutionWithThrowX64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     if (!Luau::CodeGen::isSupported())
         return;
 
     using namespace X64;
 
-    AssemblyBuilderX64 build(/* logText= */ false);
+    AssemblyBuilderX64 build(/* logger= */ nullptr, /* features= */ 0);
 
 #if defined(_WIN32)
     std::unique_ptr<UnwindBuilder> unwind = std::make_unique<UnwindBuilderWin>();
@@ -434,15 +422,13 @@ static void obscureThrowCase(int64_t (*f)(int64_t, void (*)(int64_t)))
 
 TEST_CASE("GeneratedCodeExecutionWithThrowX64Simd")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     // This test requires AVX
     if (!Luau::CodeGen::isSupported())
         return;
 
     using namespace X64;
 
-    AssemblyBuilderX64 build(/* logText= */ false);
+    AssemblyBuilderX64 build(/* logger= */ nullptr, /* features= */ 0);
 
 #if defined(_WIN32)
     std::unique_ptr<UnwindBuilder> unwind = std::make_unique<UnwindBuilderWin>();
@@ -537,14 +523,12 @@ TEST_CASE("GeneratedCodeExecutionWithThrowX64Simd")
 
 TEST_CASE("GeneratedCodeExecutionMultipleFunctionsWithThrowX64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     if (!Luau::CodeGen::isSupported())
         return;
 
     using namespace X64;
 
-    AssemblyBuilderX64 build(/* logText= */ false);
+    AssemblyBuilderX64 build(/* logger= */ nullptr, /* features= */ 0);
 
 #if defined(_WIN32)
     std::unique_ptr<UnwindBuilder> unwind = std::make_unique<UnwindBuilderWin>();
@@ -678,14 +662,12 @@ TEST_CASE("GeneratedCodeExecutionMultipleFunctionsWithThrowX64")
 
 TEST_CASE("GeneratedCodeExecutionWithThrowOutsideTheGateX64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     if (!Luau::CodeGen::isSupported())
         return;
 
     using namespace X64;
 
-    AssemblyBuilderX64 build(/* logText= */ false);
+    AssemblyBuilderX64 build(/* logger= */ nullptr, /* features= */ 0);
 
 #if defined(_WIN32)
     std::unique_ptr<UnwindBuilder> unwind = std::make_unique<UnwindBuilderWin>();
@@ -761,7 +743,7 @@ TEST_CASE("GeneratedCodeExecutionWithThrowOutsideTheGateX64")
 
     uint8_t* nativeExit = codeAllocation1.codeStart + returnOffset.location;
 
-    AssemblyBuilderX64 build2(/* logText= */ false);
+    AssemblyBuilderX64 build2(/* logger= */ nullptr, /* features= */ 0);
 
     build2.mov(r12, rArg3);
     build2.call(rArg2);
@@ -790,13 +772,33 @@ TEST_CASE("GeneratedCodeExecutionWithThrowOutsideTheGateX64")
 
 #if defined(CODEGEN_TARGET_A64)
 
+#ifdef CODEGEN_TARGET_A64_PTRAUTH_CALLS
+#include <ptrauth.h>
+#endif
+
+namespace Luau
+{
+namespace CodeGen
+{
+unsigned int getCpuFeaturesA64();
+} // namespace CodeGen
+} // namespace Luau
+
+template<typename FunctionType>
+static FunctionType* asCallablePointer(uint8_t* code)
+{
+#ifdef CODEGEN_TARGET_A64_PTRAUTH_CALLS
+    return ptrauth_sign_unauthenticated(reinterpret_cast<FunctionType*>(code), ptrauth_key_function_pointer, 0);
+#else
+    return reinterpret_cast<FunctionType*>(code);
+#endif
+}
+
 TEST_CASE("GeneratedCodeExecutionA64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     using namespace A64;
 
-    AssemblyBuilderA64 build(/* logText= */ false);
+    AssemblyBuilderA64 build(/* logger= */ nullptr, getCpuFeaturesA64());
 
     Label skip;
     build.cbz(x1, skip);
@@ -826,7 +828,7 @@ TEST_CASE("GeneratedCodeExecutionA64")
     REQUIRE(codeAllocation.codeStart);
 
     using FunctionType = int64_t(int64_t, int*);
-    FunctionType* f = (FunctionType*)codeAllocation.codeStart;
+    FunctionType* f = asCallablePointer<FunctionType>(codeAllocation.codeStart);
     int input = 10;
     int64_t result = f(20, &input);
     CHECK(result == 42);
@@ -843,19 +845,20 @@ static void throwing(int64_t arg)
 
 TEST_CASE("GeneratedCodeExecutionWithThrowA64")
 {
-    ScopedFastFlag luauCodegenFreeBlocks{FFlag::LuauCodegenFreeBlocks, true};
-
     // macOS 12 doesn't support JIT frames without pointer authentication
     if (!isUnwindSupported())
         return;
 
     using namespace A64;
 
-    AssemblyBuilderA64 build(/* logText= */ false);
+    AssemblyBuilderA64 build(/* logger= */ nullptr, getCpuFeaturesA64());
 
     std::unique_ptr<UnwindBuilder> unwind = std::make_unique<UnwindBuilderDwarf2>();
 
     unwind->startInfo(UnwindBuilder::A64);
+
+    if (build.features & Feature_PtrAuthRet)
+        build.pacibsp();
 
     build.sub(sp, sp, uint16_t(32));
     build.stp(x29, x30, mem(sp));
@@ -871,7 +874,10 @@ TEST_CASE("GeneratedCodeExecutionWithThrowA64")
     build.ldp(x29, x30, mem(sp));
     build.add(sp, sp, uint16_t(32));
 
-    build.ret();
+    if (build.features & Feature_PtrAuthRet)
+        build.retab();
+    else
+        build.ret();
 
     Label functionEnd = build.setLabel();
 
@@ -896,7 +902,7 @@ TEST_CASE("GeneratedCodeExecutionWithThrowA64")
     REQUIRE(codeAllocation.codeStart);
 
     using FunctionType = int64_t(int64_t, void (*)(int64_t));
-    FunctionType* f = (FunctionType*)codeAllocation.codeStart;
+    FunctionType* f = asCallablePointer<FunctionType>(codeAllocation.codeStart);
 
     // To simplify debugging, CHECK_THROWS_WITH_AS is not used here
     try

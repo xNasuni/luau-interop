@@ -7,7 +7,6 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(DebugLuauForceOldSolver);
-LUAU_FASTFLAG(LuauUnifyWithSubtyping2)
 
 TEST_SUITE_BEGIN("TypeInferUnknownNever");
 
@@ -118,6 +117,8 @@ TEST_CASE_FIXTURE(Fixture, "type_packs_containing_never_is_itself_uninhabitable"
 
         local x, y, z = f()
     )");
+
+    ignoreMissingAnnotations(result);
 
     if (!FFlag::DebugLuauForceOldSolver)
     {
@@ -328,20 +329,19 @@ TEST_CASE_FIXTURE(Fixture, "length_of_never")
 
 TEST_CASE_FIXTURE(Fixture, "dont_unify_operands_if_one_of_the_operand_is_never_in_any_ordering_operators")
 {
-    ScopedFastFlag _{FFlag::LuauUnifyWithSubtyping2, true};
-
     CheckResult result = check(R"(
         local function ord(x: nil, y)
             return x ~= nil and x > y
         end
     )");
 
+    ignoreMissingAnnotations(result);
 
     LUAU_REQUIRE_NO_ERRORS(result);
     if (!FFlag::DebugLuauForceOldSolver)
         CHECK_EQ("(nil, nil & ~nil) -> boolean", toString(requireType("ord")));
     else
-        CHECK_EQ("<a>(nil, a) -> boolean", toString(requireType("ord")));
+        CHECK_EQ("<T>(nil, T) -> boolean", toString(requireType("ord")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "math_operators_and_never")
@@ -352,6 +352,8 @@ TEST_CASE_FIXTURE(Fixture, "math_operators_and_never")
         end
     )");
 
+    ignoreMissingAnnotations(result);
+
     if (!FFlag::DebugLuauForceOldSolver)
     {
         LUAU_REQUIRE_ERROR_COUNT(1, result);
@@ -359,12 +361,12 @@ TEST_CASE_FIXTURE(Fixture, "math_operators_and_never")
 
         // CLI-114134 Egraph-based simplification.
         // CLI-116549 x ~= nil : false when x : nil
-        CHECK("<a>(nil, a) -> false | mul<nil & ~nil, a>" == toString(requireType("mul")));
+        CHECK("<T>(nil, T) -> false | mul<nil & ~nil, T>" == toString(requireType("mul")));
     }
     else
     {
         LUAU_REQUIRE_NO_ERRORS(result);
-        CHECK_EQ("<a>(nil, a) -> boolean", toString(requireType("mul")));
+        CHECK_EQ("<T>(nil, T) -> boolean", toString(requireType("mul")));
     }
 }
 
@@ -375,6 +377,8 @@ TEST_CASE_FIXTURE(Fixture, "compare_never")
             return x ~= nil and x > y and x < y -- infers boolean | never, which is normalized into boolean
         end
     )");
+
+    ignoreMissingAnnotations(result);
 
     LUAU_CHECK_NO_ERRORS(result);
     CHECK_EQ("(nil, number) -> boolean", toString(requireType("cmp")));
@@ -397,6 +401,8 @@ TEST_CASE_FIXTURE(Fixture, "lti_error_at_declaration_for_never_normalizations")
             end
         end
     )");
+
+    ignoreMissingAnnotations(result);
 
     LUAU_REQUIRE_ERROR_COUNT(3, result);
     CHECK(toString(result.errors[0]) == "Parameter 'a' has been reduced to never. This function is not callable with any possible value.");

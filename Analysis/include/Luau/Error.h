@@ -5,6 +5,7 @@
 #include "Luau/Location.h"
 #include "Luau/NotNull.h"
 #include "Luau/Type.h"
+#include "Luau/TypeFunctionError.h"
 #include "Luau/TypeIds.h"
 #include "Luau/Variant.h"
 
@@ -233,6 +234,14 @@ struct ModuleHasCyclicDependency
 {
     std::vector<ModuleName> cycle;
     bool operator==(const ModuleHasCyclicDependency& rhs) const;
+};
+
+struct CyclicModuleTopLevelAccess
+{
+    ModuleName cyclicModuleName;
+    Name localName;
+    Name propName;
+    bool operator==(const CyclicModuleTopLevelAccess& rhs) const;
 };
 
 struct FunctionExitsWithoutReturning
@@ -465,6 +474,13 @@ struct UserDefinedTypeFunctionError
     bool operator==(const UserDefinedTypeFunctionError& rhs) const;
 };
 
+struct BuiltInTypeFunctionError
+{
+    TypeFunctionError error;
+
+    bool operator==(const BuiltInTypeFunctionError& rhs) const;
+};
+
 struct ReservedIdentifier
 {
     std::string name;
@@ -594,6 +610,61 @@ struct AmbiguousFunctionCall
     bool operator==(const AmbiguousFunctionCall& rhs) const;
 };
 
+// Error when we access an uninitialized field within a class constructor.
+// If fieldName is absent, then `self` was used in an r-value context before all its non nilable fields were initialized.
+struct UninitializedFieldAccess
+{
+    std::optional<std::string> fieldName;
+
+    bool operator==(const UninitializedFieldAccess& rhs) const;
+};
+
+struct TypeAnnotationRequired
+{
+    TypeId inferredTy;
+
+    bool operator==(const TypeAnnotationRequired& rhs) const;
+};
+
+struct ConstructorsShouldNotReturnAnything
+{
+    bool operator==(const ConstructorsShouldNotReturnAnything&) const
+    {
+        return true;
+    }
+};
+
+struct CyclicClassInheritance
+{
+    std::vector<Name> cycle;
+
+    bool operator==(const CyclicClassInheritance& rhs) const;
+};
+
+struct InvalidClassExtension
+{
+    enum Context
+    {
+        ClassIsNotOpen,
+        NotAClass,
+        BaseIsClassInstance,
+    };
+
+    Context context;
+    TypeId baseClass;
+
+    bool operator==(const InvalidClassExtension& rhs) const;
+};
+
+struct IncompatibleClassMethodOverride
+{
+    Name method;
+    Name className;
+    Name superName;
+
+    bool operator==(const IncompatibleClassMethodOverride& rhs) const;
+};
+
 using TypeErrorData = Variant<
     TypeMismatch,
     UnknownSymbol,
@@ -620,6 +691,7 @@ using TypeErrorData = Variant<
     ExtraInformation,
     DeprecatedApiUsed,
     ModuleHasCyclicDependency,
+    CyclicModuleTopLevelAccess,
     IllegalRequire,
     FunctionExitsWithoutReturning,
     DuplicateGenericParameter,
@@ -645,6 +717,7 @@ using TypeErrorData = Variant<
     UnexpectedTypePackInSubtyping,
     ExplicitFunctionAnnotationRecommended,
     UserDefinedTypeFunctionError,
+    BuiltInTypeFunctionError,
     ReservedIdentifier,
     UnexpectedArrayLikeTableItem,
     CannotCheckDynamicStringFormatCalls,
@@ -656,7 +729,13 @@ using TypeErrorData = Variant<
     UnappliedTypeFunction,
     InstantiateGenericsOnNonFunction,
     TypeInstantiationCountMismatch,
-    AmbiguousFunctionCall>;
+    AmbiguousFunctionCall,
+    UninitializedFieldAccess,
+    TypeAnnotationRequired,
+    ConstructorsShouldNotReturnAnything,
+    CyclicClassInheritance,
+    InvalidClassExtension,
+    IncompatibleClassMethodOverride>;
 
 struct TypeErrorSummary
 {

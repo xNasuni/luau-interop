@@ -10,7 +10,6 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(DebugLuauForceOldSolver);
-LUAU_FASTFLAG(LuauAnalysisUsesSolverMode)
 
 struct ToDotClassFixture : Fixture
 {
@@ -139,9 +138,12 @@ TEST_CASE_FIXTURE(Fixture, "function")
     CheckResult result = check(R"(
 local function f(a, ...: string) return a end
 )");
+
+    ignoreMissingAnnotations(result);
+
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    CHECK_EQ("<a>(a, ...string) -> a", toString(requireType("f")));
+    CHECK_EQ("<T>(T, ...string) -> T", toString(requireType("f")));
 
     ToDotOptions opts;
     opts.showPointers = false;
@@ -336,10 +338,7 @@ n1 [label="FreeType 1"];
 
 TEST_CASE_FIXTURE(Fixture, "free_with_constraints")
 {
-    ScopedFastFlag sff[] = {
-        {FFlag::DebugLuauForceOldSolver, false},
-        {FFlag::LuauAnalysisUsesSolverMode, true},
-    };
+    DOES_NOT_PASS_OLD_SOLVER_GUARD();
 
     Type type{TypeVariant{FreeType{nullptr, getBuiltins()->numberType, getBuiltins()->optionalNumberType}}};
 

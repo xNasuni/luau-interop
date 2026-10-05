@@ -20,7 +20,7 @@ struct HostIrHooks;
 
 struct IrBuilder
 {
-    IrBuilder(const HostIrHooks& hostHooks);
+    IrBuilder(const HostIrHooks& hostHooks, const VmEnvironmentInfo& envInfo);
 
     void buildFunctionIr(Proto* proto);
 
@@ -41,6 +41,7 @@ struct IrBuilder
     IrOp undef();
 
     IrOp constInt(int value);
+    IrOp constInt64(int64_t value);
     IrOp constUint(unsigned value);
     IrOp constImport(unsigned value);
     IrOp constDouble(double value);

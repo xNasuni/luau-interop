@@ -18,6 +18,10 @@
 __pycache__
 .cache
 .clangd
+
+# Golden-test captured outputs for user debugging
+*.output.tmp
+
 *.a
 CMakeFiles
 cmake_install.cmake

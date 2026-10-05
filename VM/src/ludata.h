@@ -10,6 +10,9 @@
 // special tag value is used for newproxy-created user data (all other user data objects are host-exposed)
 #define UTAG_PROXY (LUA_UTAG_LIMIT + 1)
 
+// must be updated if more internal tags are added
+#define UTAG_INTERNAL_LIMIT (UTAG_PROXY + 1)
+
 // special tag values for luau interop
 #define UTAG_JSFUNC (LUA_UTAG_LIMIT - 1)
 #define UTAG_JSOBJECT (LUA_UTAG_LIMIT - 2)

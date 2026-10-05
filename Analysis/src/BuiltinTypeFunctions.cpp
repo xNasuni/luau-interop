@@ -5,7 +5,7 @@
 #include "Luau/Common.h"
 #include "Luau/ConstraintSolver.h"
 #include "Luau/Instantiation.h"
-#include "Luau/OverloadResolution.h"
+#include "Luau/OverloadResolver.h"
 #include "Luau/Scope.h"
 #include "Luau/Simplify.h"
 #include "Luau/Subtyping.h"
@@ -16,11 +16,19 @@
 #include "Luau/Unifier2.h"
 #include "Luau/UserDefinedTypeFunction.h"
 #include "Luau/VisitType.h"
+#include <algorithm>
+#include <string_view>
 
 LUAU_DYNAMIC_FASTINT(LuauTypeFamilyApplicationCartesianProductLimit)
 LUAU_DYNAMIC_FASTINTVARIABLE(LuauStepRefineRecursionLimit, 64)
 
-LUAU_FASTFLAGVARIABLE(LuauBuiltinTypeFunctionsUseNewOverloadResolution)
+LUAU_FASTFLAG(DebugLuauUserDefinedClasses)
+LUAU_FASTFLAG(LuauCyclicRequireTypeInference)
+LUAU_FASTFLAGVARIABLE(LuauKeyofLexicographicOrdering)
+LUAU_FASTFLAGVARIABLE(LuauDontBlockRefinementUnconditionally)
+LUAU_FASTFLAGVARIABLE(LuauSetmetatableOverrides)
+LUAU_FLAGVERSION(LuauSetmetatableOverrides, 2)
+LUAU_FASTFLAG(LuauTraverseScopeToFunction)
 
 namespace Luau
 {
@@ -108,10 +116,8 @@ std::optional<TypeFunctionReductionResult<TypeId>> tryDistributeTypeFunctionApp(
             }
         );
 
-        if (ctx->solver)
-            ctx->pushConstraint(ReduceConstraint{resultTy});
-
-        return {{resultTy, Reduction::MaybeOk, {}, {}, {}, {}, {resultTy}}};
+        ctx->freshInstances.emplace_back(resultTy);
+        return {{resultTy, Reduction::MaybeOk}};
     }
 
     return std::nullopt;
@@ -125,7 +131,7 @@ static std::optional<TypePackId> solveFunctionCall(NotNull<TypeFunctionContext> 
         ctx->builtins, ctx->arena, ctx->normalizer, ctx->typeFunctionRuntime, ctx->scope, ctx->ice, ctx->limits, location
     );
 
-    DenseHashSet<TypeId> uniqueTypes{nullptr};
+    DenseHashSet<TypeId> uniqueTypes;
     OverloadResolution resolution = resolver->resolveOverload(fnTy, argsPack, location, NotNull{&uniqueTypes}, /* useFreeTypeBounds */ false);
 
     if (resolution.ok.empty() && resolution.potentialOverloads.empty())
@@ -136,7 +142,7 @@ static std::optional<TypePackId> solveFunctionCall(NotNull<TypeFunctionContext> 
     if (!selected.overload.has_value())
         return std::nullopt;
 
-    TypePackId retPack = ctx->arena->freshTypePack(ctx->scope);
+    TypePackId retPack = ctx->arena->freshTypePack(ctx->scope, Polarity::Positive);
     TypeId prospectiveFunction = ctx->arena->addType(FunctionType{argsPack, retPack});
 
     // FIXME: It's too bad that we have to bust out the Unifier here.  We should
@@ -161,15 +167,28 @@ static std::optional<TypePackId> solveFunctionCall(NotNull<TypeFunctionContext> 
 
     if (!unifier.genericSubstitutions.empty() || !unifier.genericPackSubstitutions.empty())
     {
-        Subtyping subtyping{ctx->builtins, ctx->arena, ctx->normalizer, ctx->typeFunctionRuntime, ctx->ice};
+        Subtyping subtyping_DEPRECATED{ctx->builtins, ctx->arena, ctx->normalizer, ctx->typeFunctionRuntime, ctx->ice};
+        auto newRetTp = getApproximateReturnTypeForFunctionCall(*selected.overload).value_or(ctx->builtins->errorTypePack);
+
         std::optional<TypePackId> subst = instantiate2(
-            ctx->arena, std::move(unifier.genericSubstitutions), std::move(unifier.genericPackSubstitutions), NotNull{&subtyping}, ctx->scope, retPack
+            ctx->arena, std::move(unifier.genericSubstitutions), std::move(unifier.genericPackSubstitutions), ctx->subtyping, ctx->scope, newRetTp
         );
+
         if (!subst)
             return std::nullopt;
-        else
-            retPack = *subst;
+
+        retPack = *subst;
     }
+
+    // After we solve for the instantiated function type of this metamethod,
+    // we may have new free types if the metamethod was generic. We capture
+    // these so that they can be generalized later and we don't end up with
+    // free types in type checking.
+    for (const auto& ty : unifier.newFreshTypes)
+        trackInteriorFreeType(ctx->scope, ty);
+
+    for (const auto& tp : unifier.newFreshTypePacks)
+        trackInteriorFreeTypePack(ctx->scope, tp);
 
     return retPack;
 }
@@ -342,7 +361,12 @@ TypeFunctionReductionResult<TypeId> unmTypeFunction(
         return {std::nullopt, Reduction::Erroneous, {}, {}};
 }
 
-TypeFunctionContext::TypeFunctionContext(NotNull<ConstraintSolver> cs, NotNull<Scope> scope, NotNull<const Constraint> constraint)
+TypeFunctionContext::TypeFunctionContext(
+    NotNull<ConstraintSolver> cs,
+    NotNull<Scope> scope,
+    NotNull<const Constraint> constraint,
+    NotNull<Subtyping> subtyping
+)
     : arena(cs->arena)
     , builtins(cs->builtinTypes)
     , scope(scope)
@@ -350,6 +374,7 @@ TypeFunctionContext::TypeFunctionContext(NotNull<ConstraintSolver> cs, NotNull<S
     , typeFunctionRuntime(cs->typeFunctionRuntime)
     , ice(NotNull{&cs->iceReporter})
     , limits(NotNull{&cs->limits})
+    , subtyping(subtyping)
     , solver(cs.get())
     , constraint(constraint.get())
 {
@@ -358,7 +383,11 @@ TypeFunctionContext::TypeFunctionContext(NotNull<ConstraintSolver> cs, NotNull<S
 NotNull<Constraint> TypeFunctionContext::pushConstraint(ConstraintV&& c) const
 {
     LUAU_ASSERT(solver);
-    NotNull<Constraint> newConstraint = solver->pushConstraint(scope, constraint ? constraint->location : Location{}, std::move(c));
+    Location location = constraint ? constraint->location : Location{};
+    NotNull<Constraint> newConstraint =
+        FFlag::LuauCyclicRequireTypeInference
+            ? solver->pushConstraint(scope, location, std::move(c), constraint ? constraint->moduleName : solver->representativeModuleName)
+            : solver->DEPRECATED_pushConstraint(scope, location, std::move(c));
 
     // Every constraint that is blocked on the current constraint must also be
     // blocked on this new one.
@@ -442,50 +471,21 @@ TypeFunctionReductionResult<TypeId> numericBinopTypeFunction(
 
     TypePackId argPack = ctx->arena->addTypePack({lhsTy, rhsTy});
 
-    if (FFlag::LuauBuiltinTypeFunctionsUseNewOverloadResolution)
+    if (reversed)
     {
-        if (reversed)
-        {
-            TypePack* p = getMutable<TypePack>(argPack);
-            std::swap(p->head.front(), p->head.back());
-        }
-
-        std::optional<TypePackId> retPack = solveFunctionCall(ctx, location, *mmType, argPack);
-        if (!retPack.has_value())
-            return {std::nullopt, Reduction::Erroneous, {}, {}};
-
-        TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *retPack, 1);
-        if (extracted.head.empty())
-            return {std::nullopt, Reduction::Erroneous, {}, {}};
-
-        return {extracted.head.front(), Reduction::MaybeOk, {}, {}};
+        TypePack* p = getMutable<TypePack>(argPack);
+        std::swap(p->head.front(), p->head.back());
     }
-    else
-    {
-        SolveResult solveResult;
 
-        if (!reversed)
-            solveResult = solveFunctionCall_DEPRECATED(
-                ctx->arena, ctx->builtins, ctx->normalizer, ctx->typeFunctionRuntime, ctx->ice, ctx->limits, ctx->scope, location, *mmType, argPack
-            );
-        else
-        {
-            TypePack* p = getMutable<TypePack>(argPack);
-            std::swap(p->head.front(), p->head.back());
-            solveResult = solveFunctionCall_DEPRECATED(
-                ctx->arena, ctx->builtins, ctx->normalizer, ctx->typeFunctionRuntime, ctx->ice, ctx->limits, ctx->scope, location, *mmType, argPack
-            );
-        }
+    std::optional<TypePackId> retPack = solveFunctionCall(ctx, location, *mmType, argPack);
+    if (!retPack.has_value())
+        return {std::nullopt, Reduction::Erroneous, {}, {}};
 
-        if (!solveResult.typePackId.has_value())
-            return {std::nullopt, Reduction::Erroneous, {}, {}};
+    TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *retPack, 1);
+    if (extracted.head.empty())
+        return {std::nullopt, Reduction::Erroneous, {}, {}};
 
-        TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *solveResult.typePackId, 1);
-        if (extracted.head.empty())
-            return {std::nullopt, Reduction::Erroneous, {}, {}};
-
-        return {extracted.head.front(), Reduction::MaybeOk, {}, {}};
-    }
+    return {extracted.head.front(), Reduction::MaybeOk, {}, {}};
 }
 
 TypeFunctionReductionResult<TypeId> addTypeFunction(
@@ -673,10 +673,16 @@ TypeFunctionReductionResult<TypeId> concatTypeFunction(
     else
         inferredArgs = {rhsTy, lhsTy};
 
-    if (!solveFunctionCall(ctx, ctx->constraint ? ctx->constraint->location : Location{}, *mmType, ctx->arena->addTypePack(std::move(inferredArgs))))
+    std::optional<TypePackId> retPack =
+        solveFunctionCall(ctx, ctx->constraint ? ctx->constraint->location : Location{}, *mmType, ctx->arena->addTypePack(std::move(inferredArgs)));
+    if (!retPack)
         return {std::nullopt, Reduction::Erroneous, {}, {}};
 
-    return {ctx->builtins->stringType, Reduction::MaybeOk, {}, {}};
+    TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *retPack, 1);
+    if (extracted.head.empty())
+        return {std::nullopt, Reduction::Erroneous, {}, {}};
+
+    return {extracted.head.front(), Reduction::MaybeOk, {}, {}};
 }
 
 namespace
@@ -718,7 +724,7 @@ TypeFunctionReductionResult<TypeId> andTypeFunction(
     else if (isPending(rhsTy, ctx->solver))
         return {std::nullopt, Reduction::MaybeOk, {rhsTy}, {}};
 
-    // And evalutes to a boolean if the LHS is falsy, and the RHS type if LHS is truthy.
+    // And evaluates to a boolean if the LHS is falsy, and the RHS type if LHS is truthy.
     SimplifyResult filteredLhs = simplifyIntersection(ctx->builtins, ctx->arena, lhsTy, ctx->builtins->falsyType);
     SimplifyResult overallResult = simplifyUnion(ctx->builtins, ctx->arena, rhsTy, filteredLhs.result);
     std::vector<TypeId> blockedTypes{};
@@ -758,7 +764,7 @@ TypeFunctionReductionResult<TypeId> orTypeFunction(
     else if (isBlockedOrUnsolvedType(rhsTy))
         return {std::nullopt, Reduction::MaybeOk, {rhsTy}, {}};
 
-    // Or evalutes to the LHS type if the LHS is truthy, and the RHS type if LHS is falsy.
+    // Or evaluates to the LHS type if the LHS is truthy, and the RHS type if LHS is falsy.
     SimplifyResult filteredLhs = simplifyIntersection(ctx->builtins, ctx->arena, lhsTy, ctx->builtins->truthyType);
     SimplifyResult overallResult = simplifyUnion(ctx->builtins, ctx->arena, rhsTy, filteredLhs.result);
     std::vector<TypeId> blockedTypes{};
@@ -985,7 +991,7 @@ TypeFunctionReductionResult<TypeId> eqTypeFunction(
 // Collect types that prevent us from reducing a particular refinement.
 struct FindRefinementBlockers : TypeOnceVisitor
 {
-    DenseHashSet<TypeId> found{nullptr};
+    DenseHashSet<TypeId> found;
 
     FindRefinementBlockers()
         : TypeOnceVisitor("FindRefinementBlockers", /* skipBoundTypes */ true)
@@ -1190,7 +1196,7 @@ bool occurs(TypeId haystack, TypeId needle, DenseHashSet<TypeId>& seen)
 
 bool occurs(TypeId haystack, TypeId needle)
 {
-    DenseHashSet<TypeId> seen{nullptr};
+    DenseHashSet<TypeId> seen;
     return occurs(haystack, needle, seen);
 }
 
@@ -1269,13 +1275,16 @@ TypeFunctionReductionResult<TypeId> refineTypeFunction(
         }
     }
 
-    // If we have a blocked type in the target, we *could* potentially
-    // refine it, but more likely we end up with some type explosion in
-    // normalization.
-    FindRefinementBlockers frb;
-    frb.traverse(targetTy);
-    if (!frb.found.empty())
-        return {std::nullopt, Reduction::MaybeOk, {frb.found.begin(), frb.found.end()}, {}};
+    if (!FFlag::LuauDontBlockRefinementUnconditionally)
+    {
+        // If we have a blocked type in the target, we *could* potentially
+        // refine it, but more likely we end up with some type explosion in
+        // normalization.
+        FindRefinementBlockers frb;
+        frb.traverse(targetTy);
+        if (!frb.found.empty())
+            return {std::nullopt, Reduction::MaybeOk, {frb.found.begin(), frb.found.end()}, {}};
+    }
 
     int stepRefineCount = 0;
 
@@ -1343,6 +1352,22 @@ TypeFunctionReductionResult<TypeId> refineTypeFunction(
         // if the intersection failed to normalize, we can't reduce, but know nothing about inhabitance.
         if (!normIntersection || !normType)
             return {nullptr, {}};
+
+        if (FFlag::LuauDontBlockRefinementUnconditionally)
+        {
+            std::vector<TypeId> blockedTypes;
+
+            // Iteration through an unordered map. Not good!
+            for (const auto& [ty, _] : normIntersection->tyvars)
+            {
+                auto followed = follow(ty);
+                if (is<BlockedType>(followed))
+                    blockedTypes.emplace_back(followed);
+            }
+
+            if (!blockedTypes.empty())
+                return {nullptr, std::move(blockedTypes)};
+        }
 
         TypeId resultTy = ctx->normalizer->typeFromNormal(*normIntersection);
         // include the error type if the target type is error-suppressing and the intersection we computed is not
@@ -1458,8 +1483,8 @@ TypeFunctionReductionResult<TypeId> singletonTypeFunction(
 struct CollectUnionTypeOptions : TypeOnceVisitor
 {
     NotNull<TypeFunctionContext> ctx;
-    DenseHashSet<TypeId> options{nullptr};
-    DenseHashSet<TypeId> blockingTypes{nullptr};
+    DenseHashSet<TypeId> options;
+    DenseHashSet<TypeId> blockingTypes;
 
     explicit CollectUnionTypeOptions(NotNull<TypeFunctionContext> ctx)
         : TypeOnceVisitor("CollectUnionTypeOptions", /* skipBoundTypes */ true)
@@ -1592,7 +1617,7 @@ TypeFunctionReductionResult<TypeId> intersectTypeFunction(
     // fold over the types with `simplifyIntersection`
     TypeId resultTy = ctx->builtins->unknownType;
     // collect types which caused intersection to return never
-    DenseHashSet<TypeId> unintersectableTypes{nullptr};
+    DenseHashSet<TypeId> unintersectableTypes;
     for (auto ty : types)
     {
         // skip any `*no-refine*` types.
@@ -1660,7 +1685,13 @@ namespace
  * `isRaw` parameter indicates whether or not we should follow __index metamethods
  * returns `false` if `result` should be ignored because the answer is "all strings"
  */
-bool computeKeysOf(TypeId ty, Set<std::optional<std::string>>& result, DenseHashSet<TypeId>& seen, bool isRaw, NotNull<TypeFunctionContext> ctx)
+bool computeKeysOf(
+    TypeId ty,
+    DenseHashSet<std::optional<std::string>>& result,
+    DenseHashSet<TypeId>& seen,
+    bool isRaw,
+    NotNull<TypeFunctionContext> ctx
+)
 {
 
     // if the type is the top table type, the answer is just "all strings"
@@ -1771,7 +1802,7 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
 
     // We're going to collect the keys in here, and we use optional strings
     // so that we can differentiate between the empty string and _no_ string.
-    Set<std::optional<std::string>> keys{std::nullopt};
+    DenseHashSet<std::optional<std::string>> keys;
 
     // computing the keys for extern types
     if (normTy->hasExternTypes())
@@ -1779,7 +1810,7 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
         LUAU_ASSERT(!normTy->hasTables());
 
         // seen set for key computation for extern types
-        DenseHashSet<TypeId> seen{{}};
+        DenseHashSet<TypeId> seen;
 
         auto externTypeIter = normTy->externTypes.ordering.begin();
         auto externTypeIterEnd = normTy->externTypes.ordering.end();
@@ -1794,18 +1825,22 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
         {
             seen.clear(); // we'll reuse the same seen set
 
-            Set<std::optional<std::string>> localKeys{std::nullopt};
+            DenseHashSet<std::optional<std::string>> localKeys;
 
             // we can skip to the next class if this one is a top type
             if (!computeKeysOf(*externTypeIter, localKeys, seen, isRaw, ctx))
                 continue;
 
+            std::vector<std::optional<std::string>> toDelete;
             for (auto& key : keys)
             {
                 // remove any keys that are not present in each class
                 if (!localKeys.contains(key))
-                    keys.erase(key);
+                    toDelete.emplace_back(key);
             }
+
+            for (auto& k : toDelete)
+                keys.erase(k);
         }
     }
 
@@ -1815,7 +1850,7 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
         LUAU_ASSERT(!normTy->hasExternTypes());
 
         // seen set for key computation for tables
-        DenseHashSet<TypeId> seen{{}};
+        DenseHashSet<TypeId> seen;
 
         auto tablesIter = normTy->tables.begin();
         LUAU_ASSERT(tablesIter != normTy->tables.end()); // should be guaranteed by the `hasTables` check earlier
@@ -1829,18 +1864,22 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
         {
             seen.clear(); // we'll reuse the same seen set
 
-            Set<std::optional<std::string>> localKeys{std::nullopt};
+            DenseHashSet<std::optional<std::string>> localKeys;
 
             // we can skip to the next table if this one is the top table type
             if (!computeKeysOf(*tablesIter, localKeys, seen, isRaw, ctx))
                 continue;
 
+            std::vector<std::optional<std::string>> toDelete;
             for (auto& key : keys)
             {
                 // remove any keys that are not present in each table
                 if (!localKeys.contains(key))
                     keys.erase(key);
             }
+
+            for (auto& k : toDelete)
+                keys.erase(k);
         }
     }
 
@@ -1850,12 +1889,35 @@ TypeFunctionReductionResult<TypeId> keyofFunctionImpl(
 
     // everything is validated, we need only construct our big union of singletons now!
     std::vector<TypeId> singletons;
-    singletons.reserve(keys.size());
 
-    for (const auto& key : keys)
+    if (FFlag::LuauKeyofLexicographicOrdering)
     {
-        if (key)
-            singletons.push_back(ctx->arena->addType(SingletonType{StringSingleton{*key}}));
+        // but first, we'll sort it to keep the union at the end in lexicographic ordering
+        std::vector<std::string_view> sortedKeys;
+        sortedKeys.reserve(keys.size());
+
+        for (const auto& key : keys)
+        {
+            if (key)
+                sortedKeys.emplace_back(*key);
+        }
+
+
+        std::stable_sort(sortedKeys.begin(), sortedKeys.end());
+        singletons.reserve(sortedKeys.size());
+
+        for (const auto& key : sortedKeys)
+            singletons.push_back(ctx->arena->addType(SingletonType{StringSingleton{std::string{key.data(), key.size()}}}));
+    }
+    else
+    {
+        singletons.reserve(keys.size());
+
+        for (const auto& key : keys)
+        {
+            if (key)
+                singletons.push_back(ctx->arena->addType(SingletonType{StringSingleton{*key}}));
+        }
     }
 
     // If there's only one entry, we don't need a UnionType.
@@ -1955,7 +2017,7 @@ bool searchPropsAndIndexer(
                 indexType = follow(tblIndexer->indexResultType);
         }
 
-        if (isSubtype(ty, indexType, ctx->scope, ctx->builtins, *ctx->ice, SolverMode::New))
+        if (isSubtype(ty, indexType, ctx->arena, ctx->builtins, ctx->scope, ctx->normalizer, ctx->typeFunctionRuntime, ctx->ice))
         {
             TypeId idxResultTy = follow(tblIndexer->indexResultType);
 
@@ -2012,45 +2074,17 @@ bool tblIndexInto(
     {
         TypePackId argPack = ctx->arena->addTypePack({indexer});
 
-        if (FFlag::LuauBuiltinTypeFunctionsUseNewOverloadResolution)
-        {
-            std::optional<TypePackId> retPack = solveFunctionCall(ctx, ctx->scope->location, indexee, argPack);
+        std::optional<TypePackId> retPack = solveFunctionCall(ctx, ctx->scope->location, indexee, argPack);
 
-            if (!retPack.has_value())
-                return false;
+        if (!retPack.has_value())
+            return false;
 
-            TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *retPack, 1);
-            if (extracted.head.empty())
-                return false;
+        TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *retPack, 1);
+        if (extracted.head.empty())
+            return false;
 
-            result.insert(follow(extracted.head.front()));
-            return true;
-        }
-        else
-        {
-            SolveResult solveResult = solveFunctionCall_DEPRECATED(
-                ctx->arena,
-                ctx->builtins,
-                ctx->normalizer,
-                ctx->typeFunctionRuntime,
-                ctx->ice,
-                ctx->limits,
-                ctx->scope,
-                ctx->scope->location,
-                indexee,
-                argPack
-            );
-
-            if (!solveResult.typePackId.has_value())
-                return false;
-
-            TypePack extracted = extendTypePack(*ctx->arena, ctx->builtins, *solveResult.typePackId, 1);
-            if (extracted.head.empty())
-                return false;
-
-            result.insert(follow(extracted.head.front()));
-            return true;
-        }
+        result.insert(follow(extracted.head.front()));
+        return true;
     }
 
     // we have a table type to try indexing
@@ -2087,7 +2121,7 @@ bool tblIndexInto(
 
 bool tblIndexInto(TypeId indexer, TypeId indexee, DenseHashSet<TypeId>& result, NotNull<TypeFunctionContext> ctx, bool isRaw)
 {
-    DenseHashSet<TypeId> seenSet{{}};
+    DenseHashSet<TypeId> seenSet;
     return tblIndexInto(indexer, indexee, result, seenSet, ctx, isRaw);
 }
 
@@ -2149,7 +2183,7 @@ TypeFunctionReductionResult<TypeId> indexFunctionImpl(
     else
         typesToFind = &singleType;
 
-    DenseHashSet<TypeId> properties{{}}; // vector of types that will be returned
+    DenseHashSet<TypeId> properties; // vector of types that will be returned
 
     if (indexeeNormTy->hasExternTypes())
     {
@@ -2278,8 +2312,10 @@ TypeFunctionReductionResult<TypeId> setmetatableTypeFunction(
     TypeId targetTy = follow(typeParams.at(0));
     TypeId metatableTy = follow(typeParams.at(1));
 
-    if (isPending(targetTy, ctx->solver))
+    // Having the target type be a pending table does not block dispatch.
+    if (isPending(targetTy, ctx->solver) && !is<TableType>(targetTy))
         return {std::nullopt, Reduction::MaybeOk, {targetTy}, {}};
+
 
     std::shared_ptr<const NormalizedType> targetNorm = ctx->normalizer->normalize(targetTy);
 
@@ -2297,7 +2333,8 @@ TypeFunctionReductionResult<TypeId> setmetatableTypeFunction(
         targetNorm->hasExternTypes())
         return {std::nullopt, Reduction::Erroneous, {}, {}};
 
-    if (isPending(metatableTy, ctx->solver))
+    // Having the metatable type be a pending table does not block dispatch.
+    if (isPending(metatableTy, ctx->solver) && !is<TableType>(metatableTy))
         return {std::nullopt, Reduction::MaybeOk, {metatableTy}, {}};
 
     // if the supposed metatable is not a table, we will fail to reduce.
@@ -2318,6 +2355,14 @@ TypeFunctionReductionResult<TypeId> setmetatableTypeFunction(
         if (metatableMetamethod)
             return {std::nullopt, Reduction::Erroneous, {}, {}};
 
+        if (FFlag::LuauSetmetatableOverrides)
+        {
+            // If there's already a metatable here then grab the underlying
+            // table instead.
+            if (auto mt = get<MetatableType>(table))
+                table = mt->table;
+        }
+
         TypeId withMetatable = ctx->arena->addType(MetatableType{table, metatableTy});
 
         return {withMetatable, Reduction::MaybeOk, {}, {}};
@@ -2336,6 +2381,14 @@ TypeFunctionReductionResult<TypeId> setmetatableTypeFunction(
         // if the `__metatable` metamethod is present, then the table is locked and we cannot `setmetatable` on it.
         if (metatableMetamethod)
             return {std::nullopt, Reduction::Erroneous, {}, {}};
+
+        if (FFlag::LuauSetmetatableOverrides)
+        {
+            // If there's already a metatable here then grab the underlying
+            // table instead.
+            if (auto mt = get<MetatableType>(componentTy))
+                componentTy = mt->table;
+        }
 
         TypeId withMetatable = ctx->arena->addType(MetatableType{componentTy, metatableTy});
         SimplifyResult simplified = simplifyUnion(ctx->builtins, ctx->arena, result, withMetatable);
@@ -2511,6 +2564,34 @@ TypeFunctionReductionResult<TypeId> getmetatableTypeFunction(
     return getmetatableHelper(targetTy, location, ctx);
 }
 
+TypeFunctionReductionResult<TypeId> objectofTypeFunction(
+    TypeId instance,
+    const std::vector<TypeId>& typeParams,
+    const std::vector<TypePackId>& packParams,
+    NotNull<TypeFunctionContext> ctx
+)
+{
+    LUAU_ASSERT(FFlag::DebugLuauUserDefinedClasses);
+    if (typeParams.size() != 1 || !packParams.empty())
+    {
+        ctx->ice->ice("objectof type function: encountered a type function instance without the required argument structure");
+        LUAU_ASSERT(false);
+    }
+
+    TypeId targetTy = follow(typeParams.at(0));
+
+    if (isPending(targetTy, ctx->solver))
+        return {std::nullopt, Reduction::MaybeOk, {targetTy}, {}};
+
+    if (auto klass = get<ExternType>(targetTy); klass && klass->relation)
+    {
+        if (auto obj = klass->relation->get_if<Obj>())
+            return {obj->ty, Reduction::MaybeOk, {}, {}};
+    }
+
+    return {ctx->builtins->errorType, Reduction::MaybeOk, {}, {}};
+}
+
 TypeFunctionReductionResult<TypeId> weakoptionalTypeFunc(
     TypeId instance,
     const std::vector<TypeId>& typeParams,
@@ -2571,7 +2652,8 @@ BuiltinTypeFunctions::BuiltinTypeFunctions()
     , rawgetFunc{"rawget", rawgetTypeFunction}
     , setmetatableFunc{"setmetatable", setmetatableTypeFunction}
     , getmetatableFunc{"getmetatable", getmetatableTypeFunction}
-    , weakoptionalFunc{"weakoptional", weakoptionalTypeFunc}
+    , objectofFunc{"objectof", objectofTypeFunction}
+    , weakoptionalFunc{"weakoptional", weakoptionalTypeFunc, /* canReduceGenerics */ FFlag::LuauTraverseScopeToFunction}
 {
 }
 
