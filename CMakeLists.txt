@@ -362,7 +362,7 @@ endif()
 if(LUAU_BUILD_WEB)
     # shared options for both web builds
     set(LUAU_WEB_EXPORTED_FUNCTIONS -sEXPORTED_FUNCTIONS=['_pushGlobalToLua','_pushValueToLuaWrapper','_luaUnref','_luaCloneref','_luaVectorComponent','_luaPcall','_luaIndex','_luaNewIndex','_luaKeys','_getLuaValue','_makeLuaState','_luauLoad','_luauClose','_malloc','_free','_isreadonly','_setreadonly','_getrawmetatable','_setrawmetatable','_createLuaTable','_createLuaUserdata'])
-    set(LUAU_WEB_COMMON_LINK_FLAGS -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
+    set(LUAU_WEB_COMMON_LINK_FLAGS -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'] -sSTACK_SIZE=1048576 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=2147483648 -sMODULARIZE -sEXPORT_ES6=1 -sSINGLE_FILE=1)
 
     foreach(WEB_TARGET Luau.Web.JSPI Luau.Web.Asyncify)
         target_compile_options(${WEB_TARGET} PRIVATE ${LUAU_OPTIONS} -D__EMSCRIPTEN__)
