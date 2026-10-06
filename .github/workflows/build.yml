@@ -143,6 +143,7 @@ jobs:
       run: |
         CXX=clang++ make -j2 config=coverage native=1 coverage
     - name: upload coverage
+      if: false # codecov-action@v3 fails the TLS handshake, tests run elsewhere
       uses: codecov/codecov-action@v3
       with:
         files: ./coverage.info
