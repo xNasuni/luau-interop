@@ -768,7 +768,7 @@ EM_JS(void, ensureInterop, (), {
         }
 
         if (Module.securityTransmitList.has(jsValue)) {
-            Module.fprintwarn("illegal state: can't get persistent ref, js value '%s' is blocked", key ? String(key) : "unknown");
+            Module.fprintwarn("illegal state: can't get persistent ref, js value '%s' is blocked", key ? Module.keyName(key) : "unknown");
             return 0;
         }
 
@@ -867,6 +867,14 @@ EM_JS(void, ensureInterop, (), {
         }
     };
 
+    Module.keyName = function(value) {
+        try {
+            return String(value);
+        } catch (e) {
+            return Object.prototype.toString.call(value);
+        }
+    };
+
     Module.safeIn = function(inValue, value) {
         try {
             return inValue in value;
@@ -890,7 +898,7 @@ EM_JS(void, ensureInterop, (), {
         }
 
         if (Module.securityTransmitList.has(value)) {
-            Module.fprintwarn(`illegal j2l conversion: js value '${key ? String(key) : "unknown"}' is blocked`);
+            Module.fprintwarn(`illegal j2l conversion: js value '${key ? Module.keyName(key) : "unknown"}' is blocked`);
             return ["nil", "nil"];
         }
         
@@ -904,7 +912,7 @@ EM_JS(void, ensureInterop, (), {
             type = "integer";
             const wrapped = BigInt.asIntN(64, value);
             if (wrapped !== value) {
-                Module.fprintwarn(`scary j2l conversion: bigint '${key ? String(key) : "unknown"}' is out of int64 range, wrapped to ${wrapped}`);
+                Module.fprintwarn(`scary j2l conversion: bigint '${key ? Module.keyName(key) : "unknown"}' is out of int64 range, wrapped to ${wrapped}`);
             }
             value = wrapped.toString();
         }
@@ -1037,14 +1045,14 @@ EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const c
     const rawVal = data[Module.JS_VALUE].value;
     if (rawVal instanceof Map) {
         if (!rawVal.has(keyData)) {
-            Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'nil', 'nil', `${keyData}`]);
+            Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'nil', 'nil', Module.keyName(keyData)]);
             return 1;
         }
     }
 
     const [type, value] = Module.jsToLuauValue(envId, data[Module.JS_VALUE].value, keyData);
 
-    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${keyData}` ]);
+    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, Module.keyName(keyData) ]);
     return 1;
 
     return 0;
@@ -1186,7 +1194,7 @@ EM_JS(int, getJSIteratorNext, (int L_ptr, int envId, const char* jsRefIdStr, con
 
         const currentKey = keys[index];
 
-        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'string', String(currentKey), "jsiter__key"]);
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'string', Module.keyName(currentKey), "jsiter__key"]);
 
         const [type, value] = Module.jsToLuauValue(envId, objData[Module.JS_VALUE].value, currentKey);
         
