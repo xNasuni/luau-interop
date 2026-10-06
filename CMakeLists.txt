@@ -372,6 +372,7 @@ if(LUAU_BUILD_WEB)
 
     # jspi build native webassembly stack switching, uses C++ exceptions via native wasm exception handling
     target_compile_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions)
+    target_compile_options(Luau.VM PRIVATE -fwasm-exceptions)
     target_link_options(Luau.Web.JSPI PRIVATE -fwasm-exceptions -sJSPI -sJSPI_EXPORTS=['luaPcall','makeLuaState'])
     target_link_libraries(Luau.Web.JSPI PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
 
