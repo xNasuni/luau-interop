@@ -659,6 +659,9 @@ EM_JS(void, ensureInterop, (), {
             Module.warnedConcurrent = true;
         }
 
+        const stateData = Module.states[stateIdx];
+        stateData.pendingCalls = (stateData.pendingCalls ?? 0) + 1;
+
         await Module._asyncMutex.acquire();
         let status;
         try {
@@ -680,6 +683,7 @@ EM_JS(void, ensureInterop, (), {
             }
         } finally {
             Module._asyncMutex.release();
+            stateData.pendingCalls--;
         }
 
         const multretData = Module.states[stateIdx].transactionData[argDataKey];
@@ -1170,6 +1174,14 @@ EM_JS(int, getJSLength, (int L_ptr, int envId, const char* jsRefIdStr), {
     return Array.isArray(value) ? value.length : Module.luaError(L_ptr, "attempt to get length of a non-array value");
 });
 
+EM_JS(int, jsRefsEqual, (int envId, const char* jsRefIdStrA, const char* jsRefIdStrB), {
+    const cache = Module.states[envId].jsValueCache;
+    const a = cache.get(JSON.parse(UTF8ToString(jsRefIdStrA)))?.[Module.JS_VALUE];
+    const b = cache.get(JSON.parse(UTF8ToString(jsRefIdStrB)))?.[Module.JS_VALUE];
+
+    return a && b && a.value === b.value ? 1 : 0;
+});
+
 EM_JS(void, releaseJSKeyList, (int envId, const char* keysRefIdStr), {
     if (!Module.states[envId]) {
         throw new RuntimeError("no state for env id " + envId);
@@ -1489,6 +1501,16 @@ int proxy_len(lua_State* L)
     }
 
     lua_pushinteger(L, length);
+    return 1;
+}
+
+int proxy_eq(lua_State* L)
+{
+    jsref_ud* a = (jsref_ud*)lua_touserdata(L, 1);
+    jsref_ud* b = (jsref_ud*)lua_touserdata(L, 2);
+    int envId = getEnvId(L);
+
+    lua_pushboolean(L, a && b && a->ref && b->ref && envId != -1 && jsRefsEqual(envId, a->ref, b->ref));
     return 1;
 }
 
@@ -2237,6 +2259,8 @@ static void setupState(lua_State* L)
         lua_setfield(L, -2, "__len");
         lua_pushcclosurek(L, proxy_call, "__call", 0, NULL);
         lua_setfield(L, -2, "__call");
+        lua_pushcclosurek(L, proxy_eq, "__eq", 0, NULL);
+        lua_setfield(L, -2, "__eq");
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
         lua_pushnil(L);
