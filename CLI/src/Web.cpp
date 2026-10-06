@@ -49,8 +49,22 @@ void fprinterr(const char* fmt, ...)
     va_end(args);
 }
 
+EM_JS(int, warningsSilenced, (), {
+    try {
+        return Module.options instanceof Map && Module.options.get("LUA_INTEROP_CORE_SILENCE_WARNINGS") === true ? 1 : 0;
+    } catch (e) {
+        return 0;
+    }
+});
+// clang-format on
+
 void fprintwarn(const char* fmt, ...)
 {
+    if (warningsSilenced())
+    {
+        return;
+    }
+
     va_list args;
     va_start(args, fmt);
     fprintf(stderr, "\x1b[1;38;5;13m[luau-interop] \x1b[38;5;11m[warn] \x1b[22m");
@@ -390,6 +404,9 @@ EM_JS(void, ensureInterop, (), {
     };
     
     Module.fprintwarn = function(...args) {
+        if (Module.options instanceof Map && Module.options.get("LUA_INTEROP_CORE_SILENCE_WARNINGS") === true) {
+            return;
+        }
         console.error("\x1b[1;38;5;13m[luau-interop] \x1b[38;5;11m[warn]\x1b[22m", ...args, "\x1b[0m");
     };
 
@@ -626,6 +643,10 @@ EM_JS(void, ensureInterop, (), {
         if (luaFunctionData.released) {
             throw new GlueError("attempt to call released function");
             return;
+        }
+
+        if (Module._asyncMutex.enabled && Module.jsCallbackDepth > 0) {
+            throw new GlueError("illegal state: re-entrant lua call (lua -> js -> lua) is not supported without JSPI, use a JSPI runtime");
         }
 
         const trimmed = args.slice(0, args.findLastIndex(x => x != undefined) + 1);
@@ -1616,16 +1637,21 @@ EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson,
                 const func = data.value;
                 const ctx = data.parent?.[Module.JS_VALUE]?.value ?? null;
         
+                Module.jsCallbackDepth = (Module.jsCallbackDepth ?? 0) + 1;
                 try {
-                    returnData[0] = func.apply(ctx, args);
-                } catch (e) {
-                    // todo(xNasuni): find better method of detecting constructors, this works though
-                    if (e.toString().toLowerCase().includes("constructor") &&
-                        e.toString().toLowerCase().includes("new")) {
-                        returnData[0] = Reflect.construct(func, args);
-                    } else {
-                        throw e;
+                    try {
+                        returnData[0] = func.apply(ctx, args);
+                    } catch (e) {
+                        // todo(xNasuni): find better method of detecting constructors, this works though
+                        if (e.toString().toLowerCase().includes("constructor") &&
+                            e.toString().toLowerCase().includes("new")) {
+                            returnData[0] = Reflect.construct(func, args);
+                        } else {
+                            throw e;
+                        }
                     }
+                } finally {
+                    Module.jsCallbackDepth--;
                 }
 
                 if (returnData[0] != null && typeof returnData[0] === 'object' && typeof returnData[0].then === 'function') {
