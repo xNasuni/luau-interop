@@ -194,6 +194,9 @@ EM_JS(void, setEnvFromJS, (int L_ptr, int envId, int globalsRef, int fakeGlobals
 
             Module.ccall('setreadonly', 'void', [ 'number', 'number', 'boolean' ], [ L_ptr, data.ref, readonly ]);
         },
+        "newuserdata": function() {
+            return Module.LuaValue(L_ptr, envId, "luserdata", Module.ccall('createLuaUserdata', 'number', [ 'number' ], [ L_ptr ]));
+        },
         "getrawmetatable": function(value) {
             if (!Module.safeIn(Module.LUA_VALUE, value)) {
                 throw new Module.GlueError("illegal state: getrawmetatable on a non-lua value")
@@ -259,6 +262,11 @@ EM_JS(void, setEnvFromJS, (int L_ptr, int envId, int globalsRef, int fakeGlobals
                         : Object.entries(metatable);
                     for (const [k, v] of entries) {
                         Module.newIndexLuaTable(envId, mtLuaValue, k, v, true);
+                    }
+                    
+                    // msg(xNasuni): user protection, just incase
+                    if (!entries.some(([k]) => k === "__metatable")) {
+                        Module.newIndexLuaTable(envId, mtLuaValue, "__metatable", "The metatable is locked", true);
                     }
                 }
             }
@@ -1377,13 +1385,17 @@ extern "C" int getLuaValue(lua_State* L, int index)
     return pushTransactionString(envId, value.c_str());
 }
 
-int proxy_index(lua_State* L)
+static bool isLoading(lua_State* L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "LUAU_WEB_LOADING");
-    int isLoading = lua_toboolean(L, -1);
+    bool loading = lua_toboolean(L, -1);
     lua_pop(L, 1);
+    return loading;
+}
 
-    if (isLoading)
+int proxy_index(lua_State* L)
+{
+    if (isLoading(L))
     {
         lua_pushnil(L);
         return 1;
@@ -1685,6 +1697,12 @@ EM_JS(int, pushRetData, (int L_ptr, int envId, int returnDataKey), {
 
 int proxy_call(lua_State* L)
 {
+    if (isLoading(L))
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+
     jsref_ud* ud = (jsref_ud*)lua_touserdata(L, 1);
     if (!ud || !ud->ref)
     {
@@ -2329,6 +2347,14 @@ extern "C" int getrawmetatable(lua_State* L, int lref)
 extern "C" int createLuaTable(lua_State* L)
 {
     lua_newtable(L);
+    int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    return ref;
+}
+
+extern "C" int createLuaUserdata(lua_State* L)
+{
+    lua_newuserdata(L, 0);
     int ref = lua_ref(L, -1);
     lua_pop(L, 1);
     return ref;
