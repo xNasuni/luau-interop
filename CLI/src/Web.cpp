@@ -929,6 +929,11 @@ EM_JS(void, ensureInterop, (), {
             type = "jsymbol";
             value = String(Module.getPersistentRef(stateIdx, value, parent, key));
         }
+        else if (typeof value == "function" && Module.safeIn(Module.JS_INDEXABLE, value))
+        {
+            type = "jobject";
+            value = String(Module.getPersistentRef(stateIdx, value, parent, key));
+        }
         else if (typeof value == "function" && !(Module.safeIn(Module.LUA_VALUE, value)) && !(Module.safeIn(Module.JS_VALUE, value)))
         {
             type = "jfunction";
@@ -1644,6 +1649,10 @@ EM_ASYNC_JS(int, callJSFunction, (int L_ptr, int envId, const char* jsRefIdJson,
             try {
                 const func = data.value;
                 const ctx = data.parent?.[Module.JS_VALUE]?.value ?? null;
+
+                if (typeof func !== "function") {
+                    throw new TypeError("attempt to call a non-function js value");
+                }
         
                 Module.jsCallbackDepth = (Module.jsCallbackDepth ?? 0) + 1;
                 try {
@@ -2226,6 +2235,8 @@ static void setupState(lua_State* L)
         lua_setfield(L, -2, "__iter");
         lua_pushcclosurek(L, proxy_len, "__len", 0, NULL);
         lua_setfield(L, -2, "__len");
+        lua_pushcclosurek(L, proxy_call, "__call", 0, NULL);
+        lua_setfield(L, -2, "__call");
         lua_pushstring(L, "The metatable is locked");
         lua_setfield(L, -2, "__metatable");
         lua_pushnil(L);
