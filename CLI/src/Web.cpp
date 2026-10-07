@@ -99,8 +99,9 @@ void setEnvId(lua_State* L, int envId)
 int getEnvId(lua_State* L)
 {
     auto it = emEnvMap.find(L);
-    if (it != emEnvMap.end())
+    if (it != emEnvMap.end()) {
         return it->second;
+    }
 
     lua_State* M = lua_mainthread(L);
     it = emEnvMap.find(M);
@@ -110,8 +111,9 @@ int getEnvId(lua_State* L)
 static int saveGlobalsRefToMap(lua_State* L, std::unordered_map<lua_State*, int>& map)
 {
     auto it = map.find(L);
-    if (it != map.end())
+    if (it != map.end()) {
         return it->second;
+    }
 
     lua_pushvalue(L, LUA_GLOBALSINDEX);
     int ref = lua_ref(L, -1);
@@ -127,6 +129,44 @@ int saveOriginalGlobalsRef(lua_State* L)
 int saveSandboxedGlobalsRef(lua_State* L)
 {
     return saveGlobalsRefToMap(L, emFakeGlobalsMap);
+}
+
+static void getJsWrapperCache(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "LUAU_WEB_JSREFS");
+    if (lua_istable(L, -1)) {
+        return;
+    }
+
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_newtable(L);
+    lua_pushstring(L, "v");
+    lua_setfield(L, -2, "__mode");
+    lua_setmetatable(L, -2);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "LUAU_WEB_JSREFS");
+}
+
+static bool pushCachedJsWrapper(lua_State* L, int ref)
+{
+    getJsWrapperCache(L);
+    lua_rawgeti(L, -1, ref);
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_remove(L, -2);
+    return true;
+}
+
+static void storeCachedJsWrapper(lua_State* L, int ref)
+{
+    getJsWrapperCache(L);
+    lua_pushvalue(L, -2);
+    lua_rawseti(L, -2, ref);
+    lua_pop(L, 1);
 }
 
 // clang-format off
@@ -1862,8 +1902,13 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
             return;
         }
 
+        if (pushCachedJsWrapper(L, ref)) {
+            return;
+        }
+
         jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSOBJECT);
         ud->ref = strdup(value);
+        storeCachedJsWrapper(L, ref);
     }
     else if (strcmp(type, "jfunction") == 0)
     {
@@ -1875,12 +1920,16 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
             return;
         }
 
+        if (pushCachedJsWrapper(L, ref)) {
+            return;
+        }
+
         jsref_ud* ud = (jsref_ud*)lua_newuserdatataggedwithmetatable(L, sizeof(jsref_ud), UTAG_JSFUNC);
         ud->ref = strdup(value);
         lua_pushcclosurek(L, jsfunc_wrapper, key ? strdup(key) : "", 1, NULL);
 
-        const void* closurePtr = lua_topointer(L, -1);
-        jsfuncClosureMap[closurePtr] = std::string(value);
+        jsfuncClosureMap[lua_topointer(L, -1)] = std::string(value);
+        storeCachedJsWrapper(L, ref);
     }
     else
     {

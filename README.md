@@ -1,5 +1,4 @@
-Luau Interop
-====
+# Luau Interop
 
 <img src="./assets/LuauInterop.png" width="130px" align="right"/>
 
@@ -14,6 +13,7 @@ This fork only modifies `Web.cpp`, `lbaselib.cpp`, and `lbuiltins.cpp`.
 Luau is an embeddable programming language, this fork rewrites the WASM execution API and actually implements interop allowing you to provide a custom environment for the script that is executed, as well as interop allowing JS to call functions from Lua, and Lua to call functions from JS.
 
 ## Building Luau Interop
+
 ```sh
 ./build_linux.sh
 ./build_macos.sh
@@ -28,6 +28,7 @@ Building Luau Interop targeting Web/Node requires `emcmake` which is different f
 ## Installing Emcmake
 
 > ### Linux / MacOS
+
 ```shell
 git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk
@@ -36,7 +37,8 @@ cd emsdk
 source ./emsdk_env.sh
 ```
 
-> ### Winows
+> ### Windows
+
 ```bat
 git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk
