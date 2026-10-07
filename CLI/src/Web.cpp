@@ -946,7 +946,11 @@ EM_JS(void, ensureInterop, (), {
             return ["nil", "nil"];
         }
         
-        if (typeof value == "number")
+        if (value === null || value === undefined) {
+            type = "nil";
+            value = "nil";
+        }
+        else if (typeof value == "number")
         {
             type = "number";
             value = String(value);
