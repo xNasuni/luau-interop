@@ -1,0 +1,7 @@
+{
+  "name": "luau-interop-web-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node run.mjs" },
+  "devDependencies": { "luau-web": "1.5.0", "playwright": "1.64.0" }
+}

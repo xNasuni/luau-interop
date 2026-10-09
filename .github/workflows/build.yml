@@ -168,3 +168,13 @@ jobs:
         emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Release
         make -j2 Luau.Web.JSPI
         make -j2 Luau.Web.Asyncify
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: run web boundary regressions
+      run: |
+        cd tests/web
+        npm ci --ignore-scripts
+        npx playwright install --with-deps chromium
+        npm test -- --backend JSPI --build-dir ../..
+        npm test -- --backend Asyncify --build-dir ../..

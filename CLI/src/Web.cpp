@@ -752,7 +752,7 @@ EM_JS(void, ensureInterop, (), {
 
         const [type, value] = Module.jsToLuauValue(stateIdx, null, key);
 
-        const transactionIdx = Module.ccall("luaIndex", "number", [ "number", "number", "string", "string" ], [ luaTableData.state, luaTableData.ref, type, value ]);
+        const transactionIdx = Module.ccall("luaIndex", "number", [ "number", "number", "string", "string", "number" ], [ luaTableData.state, luaTableData.ref, type, value, lengthBytesUTF8(value) ]);
 
         const transactionData = Module.states[stateIdx].transactionData[transactionIdx];
         delete Module.states[stateIdx].transactionData[transactionIdx];
@@ -777,7 +777,7 @@ EM_JS(void, ensureInterop, (), {
         const [KT, KV] = Module.jsToLuauValue(stateIdx, null, key);
         const [VT, VV] = Module.jsToLuauValue(stateIdx, null, value);
 
-        const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly ]);
+        const modified = Module.ccall("luaNewIndex", "number", [ "number", "number", "string", "string", "string", "string", "boolean", "number", "number" ], [ luaTableData.state, luaTableData.ref, KT, KV, VT, VV, bypassReadonly, lengthBytesUTF8(KV), lengthBytesUTF8(VV) ]);
 
         if (!bypassReadonly && !modified && !Module.options.get("LUA_NONSTRICT_READONLY")) {
             throw new LuaError("attempt to modify a readonly table");
@@ -1064,7 +1064,7 @@ EM_JS(void, ensureInterop, (), {
     };
 
     Module.luaError = function(L_ptr, s) {
-        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, 'string', s, `<jserror>` ]);
+        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string', 'number' ], [ L_ptr, 'string', s, `<jserror>`, lengthBytesUTF8(s) ]);
         return -1;
     }
 });
@@ -1098,14 +1098,14 @@ EM_JS(int, getJSProperty, (int L_ptr, int envId, const char* jsRefIdStr, const c
     const rawVal = data[Module.JS_VALUE].value;
     if (rawVal instanceof Map) {
         if (!rawVal.has(keyData)) {
-            Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'nil', 'nil', Module.keyName(keyData)]);
+            Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string', 'number' ], [L_ptr, 'nil', 'nil', Module.keyName(keyData), lengthBytesUTF8('nil') ]);
             return 1;
         }
     }
 
     const [type, value] = Module.jsToLuauValue(envId, data[Module.JS_VALUE].value, keyData);
 
-    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, Module.keyName(keyData) ]);
+    Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string', 'number' ], [ L_ptr, type, value, Module.keyName(keyData), lengthBytesUTF8(value) ]);
     return 1;
 
     return 0;
@@ -1255,13 +1255,13 @@ EM_JS(int, getJSIteratorNext, (int L_ptr, int envId, const char* jsRefIdStr, con
 
         const currentKey = keys[index];
 
-        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'string', Module.keyName(currentKey), "jsiter__key"]);
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string', 'number' ], [L_ptr, 'string', Module.keyName(currentKey), "jsiter__key", lengthBytesUTF8(Module.keyName(currentKey)) ]);
 
         const [type, value] = Module.jsToLuauValue(envId, objData[Module.JS_VALUE].value, currentKey);
         
         const valueStr = String(value);
 
-        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, type, valueStr, "jsiter__value"]);
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string', 'number' ], [L_ptr, type, valueStr, "jsiter__value", lengthBytesUTF8(valueStr) ]);
 
         return 1;
     }
@@ -1796,7 +1796,7 @@ EM_JS(int, pushRetData, (int L_ptr, int envId, int returnDataKey), {
 
     returnData.forEach((data) => {
         const [type, value] = Module.jsToLuauValue(envId, null, data);
-        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string' ], [ L_ptr, type, value, `${value}` ]);
+        Module.ccall('pushValueToLuaWrapper', 'void', [ 'number', 'string', 'string', 'string', 'number' ], [ L_ptr, type, value, `${value}`, lengthBytesUTF8(value) ]);
     });
 
     return returnData.length;
@@ -1868,7 +1868,7 @@ int jsfunc_wrapper(lua_State* L)
     return proxy_call(L);
 }
 
-void pushValueToLua(lua_State* L, const char* type, const char* value, const char* key = nullptr)
+void pushValueToLua(lua_State* L, const char* type, const char* value, size_t valueLength, const char* key = nullptr)
 {
     if (strcmp(type, "number") == 0)
     {
@@ -1881,7 +1881,7 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
     }
     else if (strcmp(type, "string") == 0)
     {
-        lua_pushstring(L, value);
+        lua_pushlstring(L, value, valueLength);
     }
     else if (strcmp(type, "boolean") == 0)
     {
@@ -1947,7 +1947,7 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
     }
 }
 
-extern "C" void pushGlobalToLua(lua_State* L, const char* key, const char* type, const char* value)
+extern "C" void pushGlobalToLua(lua_State* L, const char* key, const char* type, const char* value, size_t keyLength, size_t valueLength)
 {
     if (!L || !key || !type || !value)
     {
@@ -1955,13 +1955,14 @@ extern "C" void pushGlobalToLua(lua_State* L, const char* key, const char* type,
         return;
     }
 
-    pushValueToLua(L, type, value, key);
-    lua_setglobal(L, key);
+    lua_pushlstring(L, key, keyLength);
+    pushValueToLua(L, type, value, valueLength, key);
+    lua_settable(L, LUA_GLOBALSINDEX);
 }
 
-extern "C" void pushValueToLuaWrapper(lua_State* L, const char* type, const char* value, const char* key)
+extern "C" void pushValueToLuaWrapper(lua_State* L, const char* type, const char* value, const char* key, size_t valueLength)
 {
-    pushValueToLua(L, type, value, key);
+    pushValueToLua(L, type, value, valueLength, key);
 }
 
 // clang-format off
@@ -1976,7 +1977,7 @@ EM_JS(int, pushArgs, (int L_int, int envId, int argIdx), {
 
     argData.forEach((data) => {
         const [type, value] = Module.jsToLuauValue(envId, null, data);
-        Module.ccall("pushValueToLuaWrapper", 'void', [ 'number', 'string', 'string', 'string' ], [ L_int, type, value, '<callarg>' ]);
+        Module.ccall("pushValueToLuaWrapper", 'void', [ 'number', 'string', 'string', 'string', 'number' ], [ L_int, type, value, '<callarg>', lengthBytesUTF8(value) ]);
     });
     
     return length;
@@ -2171,7 +2172,7 @@ EM_JS(int, sendValueToJS, (int envId, const char* valueJson), {
 });
 // clang-format on
 
-extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV)
+extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV, size_t keyLength)
 {
     int envId = getEnvId(L);
     if (envId == -1)
@@ -2181,7 +2182,7 @@ extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV)
     }
 
     lua_getref(L, lref);
-    pushValueToLua(L, KT, KV, "<indexarg>");
+    pushValueToLua(L, KT, KV, keyLength, "<indexarg>");
 
     lua_rawget(L, -2);
 
@@ -2192,7 +2193,7 @@ extern "C" int luaIndex(lua_State* L, int lref, const char* KT, const char* KV)
     return sendValueToJS(envId, valueJson.c_str());
 }
 
-extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV, bool bypassReadonly)
+extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* KV, const char* VT, const char* VV, bool bypassReadonly, size_t keyLength, size_t valueLength)
 {
     lua_getref(L, lref);
 
@@ -2210,8 +2211,8 @@ extern "C" bool luaNewIndex(lua_State* L, int lref, const char* KT, const char* 
         }
     }
 
-    pushValueToLua(L, KT, KV, "<indexarg>");
-    pushValueToLua(L, VT, VV, KV);
+    pushValueToLua(L, KT, KV, keyLength, "<indexarg>");
+    pushValueToLua(L, VT, VV, valueLength, KV);
 
     lua_rawset(L, -3);
 
