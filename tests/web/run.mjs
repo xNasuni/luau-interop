@@ -9,7 +9,7 @@ import {chromium} from 'playwright';
 const root = dirname(fileURLToPath(import.meta.url));
 const {values} = parseArgs({options: {
     backend: {type: 'string'}, 'build-dir': {type: 'string'}, report: {type: 'string'},
-    suite: {type: 'string', default: 'nul'},
+    suite: {type: 'string', default: 'nul'}, case: {type: 'string'},
 }});
 if (!['JSPI', 'Asyncify'].includes(values.backend) || !values['build-dir'] || !['nul', 'lifetime'].includes(values.suite))
     throw Error('Usage: npm test -- --backend JSPI|Asyncify --build-dir ../../build-web [--report results.json]');
@@ -41,24 +41,25 @@ try {
     page.on('console', message => report.console.push(message.text()));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     report.surface = values.backend === 'JSPI' ? 'worker' : 'window';
-    report.results = await Promise.race([page.evaluate(async ({backend, runtime, suite}) => {
+    report.results = await Promise.race([page.evaluate(async ({backend, runtime, suite, only}) => {
         if (backend === 'Asyncify') {
             const {runTests} = await import('/worker.mjs');
-            return runTests({backend, runtime, suite});
+            return runTests({backend, runtime, suite, only});
         }
         return new Promise((resolve, reject) => {
             const worker = new Worker('/worker.mjs', {type: 'module'});
             const timer = setTimeout(() => { worker.terminate(); reject(Error('worker deadline (60000ms)')); }, 60000);
             worker.onerror = event => { clearTimeout(timer); worker.terminate(); reject(Error(event.message)); };
             worker.onmessage = ({data}) => { clearTimeout(timer); worker.terminate(); resolve(data); };
-            worker.postMessage({backend, runtime, suite});
+            worker.postMessage({backend, runtime, suite, only});
         });
-    }, {backend: values.backend, runtime: '/' + relative(root, runtime), suite: values.suite}), new Promise((_, reject) => {
+    }, {backend: values.backend, runtime: '/' + relative(root, runtime), suite: values.suite, only: values.case}), new Promise((_, reject) => {
         const timer = setTimeout(() => reject(Error('browser deadline (65000ms)')), 65000);
         timer.unref();
     })]);
     report.expectedCases = values.suite === 'lifetime' ? ['recreate-100', 'two-live-vms', 'closed-wrapper', 'coroutine-owner', 'release-reuse', 'error-recovery', 'callback-gc'] : [...Array.from({length: 9}, (_, i) => `value-${i}`), 'distinct-table-keys', 'object-keys-and-iteration', 'raw-global', 'opaque-identifiers', 'js-error-ingress'];
-    if (JSON.stringify(report.results.map(r => r.id)) !== JSON.stringify(report.expectedCases) || report.results.some(result => !result.pass)) process.exitCode = 1;
+    if (values.case) report.expectedCases = report.expectedCases.filter(id => id === values.case);
+    if (!report.expectedCases.length || JSON.stringify(report.results.map(r => r.id)) !== JSON.stringify(report.expectedCases) || report.results.some(result => !result.pass)) process.exitCode = 1;
 } catch (error) { report.error = error.stack; process.exitCode = 1; }
 finally {
     for (const cleanup of [() => browser?.close(), () => server && new Promise((resolve, reject) => server.close(e => e ? reject(e) : resolve())), () => rm(runtime, {recursive: true, force: true})]) {

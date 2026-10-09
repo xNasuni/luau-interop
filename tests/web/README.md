@@ -41,3 +41,6 @@ closed wrappers, coroutine-owned exports, clone/release/reference reuse, error
 recovery and callback identity under allocation/GC pressure. All owned states are
 closed. Those counts are not a claim of zero heap leaks. Same-state calls are
 serialized; destroying an actively executing VM remains unsupported.
+
+Use `--case release-reuse --suite lifetime` to isolate one lifetime regression
+without earlier cases changing allocator/cache state. Unknown case names fail.

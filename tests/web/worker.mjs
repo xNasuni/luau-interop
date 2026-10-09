@@ -1,6 +1,7 @@
 export async function runTests(data) {
     const results = [];
     const check = async (id, test) => {
+        if (data.only && data.only !== id) return;
         try { await test(); results.push({id, pass: true}); }
         catch (error) { results.push({id, pass: false, error: String(error)}); }
     };
