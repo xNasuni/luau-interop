@@ -28,8 +28,13 @@ export async function lifetimeTests({LuauState, M, check, equal}) {
         });
         await check('coroutine-owner', async () => {
             const b = await create();
-            const [table, fn] = await execute(b, `local co=coroutine.create(function() return {answer=42}, function() return 43 end end)
-                local ok,t,f=coroutine.resume(co) assert(ok) return t,f`);
+            let table, fn;
+            // Serialize from inside the coroutine's JS callback, not merely from
+            // the main thread after coroutine.resume returns its values.
+            await execute(b, `local callback=... local co=coroutine.create(function()
+                callback({answer=42}, function() return 43 end)
+            end) local ok,err=coroutine.resume(co) assert(ok,err) return co`,
+                (value, callable) => { table=value; fn=callable; });
             const a = await create(); close(a);
             equal(table.get('answer'), 42); equal(await fn(), [43]); close(b);
         });
