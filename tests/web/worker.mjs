@@ -17,6 +17,11 @@ export async function runTests(data) {
         }
         equal('Suspending' in WebAssembly && 'promising' in WebAssembly, data.backend === 'JSPI');
         const {LuauState, InternalLuauWasmModule: M} = await import(`${data.runtime}/index.js`);
+        if (data.suite === 'lifetime') {
+            const {lifetimeTests} = await import('./lifetime.mjs');
+            await lifetimeTests({LuauState, M, check, equal});
+            return results;
+        }
         vm = await LuauState.createAsync();
         M.options.set('LUA_IMPLICIT_ARRAYS_TO_JS_ARRAYS', false);
         const [probe] = await vm.loadstring(`return {

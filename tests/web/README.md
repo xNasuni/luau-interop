@@ -28,3 +28,16 @@ object reads/iteration, callback returns, caught JavaScript errors, and raw glob
 assignment. Point the same runner at an affected build to verify it exits nonzero.
 The raw-global call includes the candidate ABI's extra length arguments; an older
 build ignores them and demonstrates the truncation. The public front API is unchanged.
+
+The lifetime suite runs in one loaded runtime (not a fresh worker per VM):
+
+```sh
+npm test -- --backend JSPI --build-dir ../../build-web --suite lifetime
+npm test -- --backend Asyncify --build-dir ../../build-web --suite lifetime
+```
+
+It covers 100 recreation cycles, a second live VM during repeated close/recreate,
+closed wrappers, coroutine-owned exports, clone/release/reference reuse, error
+recovery and callback identity under allocation/GC pressure. All owned states are
+closed. Those counts are not a claim of zero heap leaks. Same-state calls are
+serialized; destroying an actively executing VM remains unsupported.

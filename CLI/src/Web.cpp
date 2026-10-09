@@ -73,63 +73,68 @@ void fprintwarn(const char* fmt, ...)
     va_end(args);
 }
 
-static std::unordered_map<lua_State*, int> emEnvMap;
-static std::unordered_map<lua_State*, int> emGlobalsMap;
-static std::unordered_map<lua_State*, int> emFakeGlobalsMap;
-static std::unordered_map<const void*, int> refCache;
-static std::unordered_map<const void*, std::string> jsfuncClosureMap;
+// A registry reference belongs to one VM, even when allocation addresses are reused.
+struct InteropState
+{
+    int envId = -1;
+    int globalsRef = LUA_NOREF;
+    int sandboxedGlobalsRef = LUA_NOREF;
+    std::unordered_map<const void*, int> refCache;
+};
+
+static std::unordered_map<lua_State*, InteropState> interopStates;
+
+static InteropState& getInteropState(lua_State* L)
+{
+    return interopStates.at(lua_mainthread(L));
+}
 
 int getPersistentRef(lua_State* L, int index)
 {
+    auto& cache = getInteropState(L).refCache;
     const void* ptr = lua_topointer(L, index);
-    auto it = refCache.find(ptr);
-    if (it != refCache.end())
+    auto it = cache.find(ptr);
+    if (it != cache.end())
         return it->second;
 
     int ref = lua_ref(L, index);
-    refCache[ptr] = ref;
+    cache[ptr] = ref;
     return ref;
 }
 
 void setEnvId(lua_State* L, int envId)
 {
-    emEnvMap[L] = envId;
+    getInteropState(L).envId = envId;
 }
 
 int getEnvId(lua_State* L)
 {
-    auto it = emEnvMap.find(L);
-    if (it != emEnvMap.end()) {
-        return it->second;
-    }
-
-    lua_State* M = lua_mainthread(L);
-    it = emEnvMap.find(M);
-    return it != emEnvMap.end() ? it->second : -1;
+    auto it = interopStates.find(lua_mainthread(L));
+    return it != interopStates.end() ? it->second.envId : -1;
 }
 
-static int saveGlobalsRefToMap(lua_State* L, std::unordered_map<lua_State*, int>& map)
+static int saveGlobalsRef(lua_State* L, int& ref)
 {
-    auto it = map.find(L);
-    if (it != map.end()) {
-        return it->second;
+    if (ref == LUA_NOREF)
+    {
+        lua_pushvalue(L, LUA_GLOBALSINDEX);
+        ref = lua_ref(L, -1);
+        lua_pop(L, 1);
     }
-
-    lua_pushvalue(L, LUA_GLOBALSINDEX);
-    int ref = lua_ref(L, -1);
-    lua_pop(L, 1);
-    map[L] = ref;
     return ref;
 }
 
 int saveOriginalGlobalsRef(lua_State* L)
 {
-    return saveGlobalsRefToMap(L, emGlobalsMap);
+    return saveGlobalsRef(L, getInteropState(L).globalsRef);
 }
+
 int saveSandboxedGlobalsRef(lua_State* L)
 {
-    return saveGlobalsRefToMap(L, emFakeGlobalsMap);
+    return saveGlobalsRef(L, getInteropState(L).sandboxedGlobalsRef);
 }
+
+int jsfunc_wrapper(lua_State* L);
 
 static void getJsWrapperCache(lua_State* L)
 {
@@ -468,6 +473,9 @@ EM_JS(void, ensureInterop, (), {
                 type,
                 state,
                 persistentRef() {
+                    if (this.released || !Module.states[this.stateIdx]) {
+                        throw new Module.GlueError("cannot clone a released value or destroyed state");
+                    }
                     return Module.LuaValue(this.state, this.stateIdx, this.type, Module.ccall('luaCloneref', 'int', [ 'number', 'number' ], [ this.state, this.ref ]));
                 },
                 release() {
@@ -475,7 +483,11 @@ EM_JS(void, ensureInterop, (), {
                     {
                         return;
                     }
+                    if (!Module.states[this.stateIdx]) {
+                        throw new Module.GlueError("cannot release a value from a destroyed state");
+                    }
                     Module.ccall('luaUnref', 'void', [ 'number', 'number' ], [ this.state, this.ref ]);
+                    Module.states[this.stateIdx].luaValueCache.delete(this.ref);
                     this.released = true;
                 }
             },
@@ -1421,14 +1433,20 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
     case LUA_TBUFFER:
     case LUA_TVECTOR:
     {
-        // note(xNasuni): it is possible for a "lua_tfunction" to have a js function closure but still be a "lua_tfunction"
-        if (valueType == LUA_TFUNCTION)
+        // Inspect the live closure rather than caching its allocation address: the
+        // weak wrapper cache allows collection and address reuse within a VM too.
+        if (valueType == LUA_TFUNCTION && lua_iscfunction(L, index) && lua_tocfunction(L, index) == jsfunc_wrapper)
         {
-            const void* ptr = lua_topointer(L, index);
-            auto jsfuncIt = jsfuncClosureMap.find(ptr);
-            if (jsfuncIt != jsfuncClosureMap.end())
+            if (lua_getupvalue(L, index, 1))
             {
-                return std::string("{\"type\":\"jfunction\",\"value\":") + jsfuncIt->second + "}";
+                jsref_ud* ud = static_cast<jsref_ud*>(lua_touserdatatagged(L, -1, UTAG_JSFUNC));
+                if (ud)
+                {
+                    std::string result = std::string("{\"type\":\"jfunction\",\"value\":") + ud->ref + "}";
+                    lua_pop(L, 1);
+                    return result;
+                }
+                lua_pop(L, 1);
             }
         }
 
@@ -1932,7 +1950,6 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, size_t va
         ud->ref = strdup(value);
         lua_pushcclosurek(L, jsfunc_wrapper, key ? strdup(key) : "", 1, NULL);
 
-        jsfuncClosureMap[lua_topointer(L, -1)] = std::string(value);
         storeCachedJsWrapper(L, ref);
     }
     else
@@ -2130,6 +2147,7 @@ extern "C" int luaCloneref(lua_State* L, int ref)
 {
     lua_getref(L, ref);
     int persistentRef = lua_ref(L, -1);
+    lua_pop(L, 1);
     return persistentRef;
 }
 
@@ -2155,7 +2173,10 @@ extern "C" void luaUnref(lua_State* L, int ref)
 
     if (ptr)
     {
-        refCache.erase(ptr);
+        auto& cache = getInteropState(L).refCache;
+        auto it = cache.find(ptr);
+        if (it != cache.end() && it->second == ref)
+            cache.erase(it);
     }
 
     lua_unref(L, ref);
@@ -2340,6 +2361,7 @@ extern "C" lua_State* makeLuaState(int envId)
 
     // create new state
     lua_State* L = luaL_newstate();
+    interopStates.emplace(L, InteropState{});
 
     // setup state
     setupState(L);
@@ -2435,7 +2457,9 @@ extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx)
 
 extern "C" void luauClose(lua_State* L)
 {
+    lua_State* owner = lua_mainthread(L);
     lua_close(L);
+    interopStates.erase(owner);
 }
 
 extern "C" bool isreadonly(lua_State* L, int lref)

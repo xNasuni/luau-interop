@@ -11,7 +11,7 @@ const {values} = parseArgs({options: {
     backend: {type: 'string'}, 'build-dir': {type: 'string'}, report: {type: 'string'},
     suite: {type: 'string', default: 'nul'},
 }});
-if (!['JSPI', 'Asyncify'].includes(values.backend) || !values['build-dir'])
+if (!['JSPI', 'Asyncify'].includes(values.backend) || !values['build-dir'] || !['nul', 'lifetime'].includes(values.suite))
     throw Error('Usage: npm test -- --backend JSPI|Asyncify --build-dir ../../build-web [--report results.json]');
 const backend = `Luau.Web.${values.backend}.js`;
 const runtime = await mkdtemp(join(root, '.runtime-'));
@@ -37,6 +37,8 @@ try {
     browser = await chromium.launch({headless: true});
     report.browser = browser.version();
     const page = await browser.newPage();
+    report.console = [];
+    page.on('console', message => report.console.push(message.text()));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     report.surface = values.backend === 'JSPI' ? 'worker' : 'window';
     report.results = await Promise.race([page.evaluate(async ({backend, runtime, suite}) => {
@@ -55,7 +57,7 @@ try {
         const timer = setTimeout(() => reject(Error('browser deadline (65000ms)')), 65000);
         timer.unref();
     })]);
-    report.expectedCases = [...Array.from({length: 9}, (_, i) => `value-${i}`), 'distinct-table-keys', 'object-keys-and-iteration', 'raw-global', 'opaque-identifiers', 'js-error-ingress'];
+    report.expectedCases = values.suite === 'lifetime' ? ['recreate-100', 'two-live-vms', 'closed-wrapper', 'coroutine-owner', 'release-reuse', 'error-recovery', 'callback-gc'] : [...Array.from({length: 9}, (_, i) => `value-${i}`), 'distinct-table-keys', 'object-keys-and-iteration', 'raw-global', 'opaque-identifiers', 'js-error-ingress'];
     if (JSON.stringify(report.results.map(r => r.id)) !== JSON.stringify(report.expectedCases) || report.results.some(result => !result.pass)) process.exitCode = 1;
 } catch (error) { report.error = error.stack; process.exitCode = 1; }
 finally {

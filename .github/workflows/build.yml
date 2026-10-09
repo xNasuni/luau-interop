@@ -178,3 +178,5 @@ jobs:
         npx playwright install --with-deps chromium
         npm test -- --backend JSPI --build-dir ../..
         npm test -- --backend Asyncify --build-dir ../..
+        npm test -- --backend JSPI --build-dir ../.. --suite lifetime
+        npm test -- --backend Asyncify --build-dir ../.. --suite lifetime
