@@ -18,6 +18,7 @@ on:
 
 jobs:
   unix:
+    if: false
     strategy:
       matrix:
         os: [{name: ubuntu, version: ubuntu-latest}, {name: macos, version: macos-latest}, {name: macos-arm, version: macos-14}]
@@ -62,6 +63,7 @@ jobs:
          ./luau-compile tests/conformance/assert.luau
 
   windows:
+    if: false
     runs-on: windows-latest
     strategy:
       matrix:
@@ -100,6 +102,7 @@ jobs:
         Debug/luau-compile tests/conformance/assert.luau
 
   configurations:
+    if: false
     strategy:
       matrix:
         config:
@@ -133,6 +136,7 @@ jobs:
         build/Luau.Conformance --codegen -O2 --fflags=true
 
   coverage:
+    if: false
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v2

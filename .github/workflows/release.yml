@@ -12,6 +12,7 @@ on:
 
 jobs:
   build:
+    if: false
     strategy:
       matrix: # not using ubuntu-latest to improve compatibility
         os: [{name: ubuntu, version: ubuntu-22.04}, {name: macos, version: macos-latest}, {name: windows, version: windows-latest}]
