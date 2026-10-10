@@ -484,8 +484,11 @@ EM_JS(void, ensureInterop, (), {
                     {
                         return;
                     }
+                    
                     Module.ccall('luaUnref', 'void', [ 'number', 'number' ], [ this.state, this.ref ]);
                     this.released = true;
+
+                    Module.states[stateIdx]?.luaValueCache.delete(ref);
                 }
             },
             toString() {
