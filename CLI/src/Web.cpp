@@ -484,7 +484,7 @@ EM_JS(void, ensureInterop, (), {
                     {
                         return;
                     }
-                    
+
                     Module.ccall('luaUnref', 'void', [ 'number', 'number' ], [ this.state, this.ref ]);
                     this.released = true;
 
@@ -872,7 +872,7 @@ EM_JS(void, ensureInterop, (), {
         {
         //--> value types
         case "string":
-            return String(v.value).replaceAll("\\u0000", "\0");
+            return String(v.value);
         case "number":
             if (v.value == "inf") {
                 return Infinity
@@ -977,8 +977,12 @@ EM_JS(void, ensureInterop, (), {
             value = wrapped.toString();
         }
         else if (typeof value == "string") {
-            type = "string";
-            value = String(value);
+            if (value.includes("\0")) {
+                type = "lstring";
+                value = lengthBytesUTF8(value) + ":" + value;
+            } else {
+                type = "string";
+            }
         }
         else if (typeof value == "boolean")
         {
@@ -1897,6 +1901,18 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
     else if (strcmp(type, "string") == 0)
     {
         lua_pushstring(L, value);
+    }
+    else if (strcmp(type, "lstring") == 0)
+    {
+        char* end = nullptr;
+        size_t len = strtoull(value, &end, 10);
+        if (end == value || *end != ':')
+        {
+            fprintwarn("illegal push: malformed lstring for key '%s'", key ? key : "unknown");
+            lua_pushnil(L);
+            return;
+        }
+        lua_pushlstring(L, end + 1, len);
     }
     else if (strcmp(type, "boolean") == 0)
     {
