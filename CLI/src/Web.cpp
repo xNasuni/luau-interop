@@ -939,11 +939,13 @@ EM_JS(void, ensureInterop, (), {
         return false;
     };
 
-    Module.jsToLuauValue = function(stateIdx, parent, key) {
+    Module.jsToLuauValue = function(stateIdx, parent, key, preread) {
         let type = "unknown";
         let value = null;
-        
-        if (parent != null) {
+
+        if (preread) {
+            value = preread.value ?? null;
+        } else if (parent != null) {
             if (parent instanceof Map) {
                 value = parent.get(key) ?? null;
             } else {
@@ -954,10 +956,10 @@ EM_JS(void, ensureInterop, (), {
         }
 
         if (Module.securityTransmitList.has(value)) {
-            Module.fprintwarn(`illegal j2l conversion: js value '${key ? Module.keyName(key) : "unknown"}' is blocked`);
+            Module.fprintwarn(`illegal j2l conversion: js value at key '${key != null ? Module.keyName(key) : "unknown"}' is blocked`);
             return ["nil", "nil"];
         }
-        
+
         if (value === null || value === undefined) {
             type = "nil";
             value = "nil";
@@ -1199,10 +1201,15 @@ EM_JS(char*, prepareJSKeyList, (int L_ptr, int envId, const char* jsRefIdStr), {
                 k !== Module.LUA_VALUE && k !== Module.JS_VALUE && k !== Module.JS_MUTABLE
             );
         } else if (typeof data[Module.JS_VALUE].value === 'object') {
-            keys = Object.keys(data[Module.JS_VALUE].value);
+            const value = data[Module.JS_VALUE].value;
+            keys = Array.isArray(value)
+                ? Array.from(value.keys()).filter(i => i in value)
+                : Object.keys(value);
         }
 
         if (keys) {
+            keys = keys.filter(k => !Module.securityTransmitList.has(k));
+
             const keysId = String(jsRefId) + "_keys_" + crypto.randomUUID();
             
             Module.states[envId].jsValueCache.set(keysId, {
@@ -1264,22 +1271,44 @@ EM_JS(int, getJSIteratorNext, (int L_ptr, int envId, const char* jsRefIdStr, con
 
     if (objData && keysData) {
         const keys = keysData[Module.JS_VALUE].value;
-        if (index >= keys.length) {
-            Module.states[envId].jsValueCache.delete(keysRefId);
-            return 0; 
+        const parent = objData[Module.JS_VALUE].value;
+
+        let skipped = 0;
+        let currentKey;
+        let read;
+        while (true) {
+            if (index + skipped >= keys.length) {
+                Module.states[envId].jsValueCache.delete(keysRefId);
+                return 0;
+            }
+
+            currentKey = keys[index + skipped];
+            read = { value: parent instanceof Map ? parent.get(currentKey) : parent[currentKey] };
+
+            if (!Module.securityTransmitList.has(read.value)) {
+                break;
+            }
+            skipped++;
         }
 
-        const currentKey = keys[index];
+        if (currentKey == null) {
+            return Module.luaError(L_ptr, "table index is nil");
+        }
 
-        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, 'string', Module.keyName(currentKey), "jsiter__key"]);
-
-        const [type, value] = Module.jsToLuauValue(envId, objData[Module.JS_VALUE].value, currentKey);
+        const [keyType, keyValue] = Module.jsToLuauValue(envId, null, currentKey);
+        if (keyType === "nil") {
+            return Module.luaError(L_ptr, "illegal table key: unsupported type '" + typeof currentKey + "'");
+        }
         
+        Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, keyType, keyValue, "jsiter__key"]);
+
+        const [type, value] = Module.jsToLuauValue(envId, parent, currentKey, read);
+
         const valueStr = String(value);
 
         Module.ccall('pushValueToLuaWrapper', 'void', ['number', 'string', 'string', 'string'], [L_ptr, type, valueStr, "jsiter__value"]);
 
-        return 1;
+        return skipped + 1;
     }
 
     return 0;
@@ -1653,9 +1682,15 @@ int proxy_iter_next(lua_State* L)
 
     int found = getJSIteratorNext((int)L, envId, jsRefIdStr, keysRefIdStr, index);
 
+    if (found < 0)
+    {
+        lua_error(L);
+        return 0;
+    }
+
     if (found)
     {
-        lua_pushinteger(L, index + 1);
+        lua_pushinteger(L, index + found);
         lua_replace(L, lua_upvalueindex(3));
 
         return 2;
