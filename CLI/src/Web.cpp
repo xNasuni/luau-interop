@@ -29,6 +29,8 @@ typedef struct
     const char* ref;
 } jsref_ud;
 
+int jsfunc_wrapper(lua_State* L);
+
 void fprint(const char* fmt, ...)
 {
     va_list args;
@@ -73,62 +75,69 @@ void fprintwarn(const char* fmt, ...)
     va_end(args);
 }
 
-static std::unordered_map<lua_State*, int> emEnvMap;
-static std::unordered_map<lua_State*, int> emGlobalsMap;
-static std::unordered_map<lua_State*, int> emFakeGlobalsMap;
-static std::unordered_map<const void*, int> refCache;
-static std::unordered_map<const void*, std::string> jsfuncClosureMap;
+struct JsState
+{
+    int envId = -1;
+    int globalsRef = LUA_NOREF;
+    int fakeGlobalsRef = LUA_NOREF;
+
+    std::unordered_map<const void*, int> refs;
+};
+
+static JsState* jsState(lua_State* L)
+{
+    return static_cast<JsState*>(lua_callbacks(L)->userdata);
+}
 
 int getPersistentRef(lua_State* L, int index)
 {
+    JsState* js = jsState(L);
+
     const void* ptr = lua_topointer(L, index);
-    auto it = refCache.find(ptr);
-    if (it != refCache.end())
+    if (!ptr) {
+        return lua_ref(L, index);
+    }
+
+    auto it = js->refs.find(ptr);
+    if (it != js->refs.end())
+    {
         return it->second;
+    }
 
     int ref = lua_ref(L, index);
-    refCache[ptr] = ref;
+    js->refs[ptr] = ref;
     return ref;
 }
 
 void setEnvId(lua_State* L, int envId)
 {
-    emEnvMap[L] = envId;
+    jsState(L)->envId = envId;
 }
 
 int getEnvId(lua_State* L)
 {
-    auto it = emEnvMap.find(L);
-    if (it != emEnvMap.end()) {
-        return it->second;
-    }
-
-    lua_State* M = lua_mainthread(L);
-    it = emEnvMap.find(M);
-    return it != emEnvMap.end() ? it->second : -1;
+    JsState* js = jsState(L);
+    return js ? js->envId : -1;
 }
 
-static int saveGlobalsRefToMap(lua_State* L, std::unordered_map<lua_State*, int>& map)
+static int saveGlobalsRef(lua_State* L, int& slot)
 {
-    auto it = map.find(L);
-    if (it != map.end()) {
-        return it->second;
-    }
+    if (slot != LUA_NOREF)
+        return slot;
 
     lua_pushvalue(L, LUA_GLOBALSINDEX);
-    int ref = lua_ref(L, -1);
+    slot = lua_ref(L, -1);
     lua_pop(L, 1);
-    map[L] = ref;
-    return ref;
+    return slot;
 }
 
 int saveOriginalGlobalsRef(lua_State* L)
 {
-    return saveGlobalsRefToMap(L, emGlobalsMap);
+    return saveGlobalsRef(L, jsState(L)->globalsRef);
 }
 int saveSandboxedGlobalsRef(lua_State* L)
 {
-    return saveGlobalsRefToMap(L, emFakeGlobalsMap);
+    return saveGlobalsRef(L, jsState(L)->fakeGlobalsRef);
 }
 
 static void getJsWrapperCache(lua_State* L)
@@ -1424,11 +1433,14 @@ std::string serializeLuaValue(lua_State* L, int index, int* refOut)
         // note(xNasuni): it is possible for a "lua_tfunction" to have a js function closure but still be a "lua_tfunction"
         if (valueType == LUA_TFUNCTION)
         {
-            const void* ptr = lua_topointer(L, index);
-            auto jsfuncIt = jsfuncClosureMap.find(ptr);
-            if (jsfuncIt != jsfuncClosureMap.end())
+            if (lua_tocfunction(L, index) == jsfunc_wrapper && lua_getupvalue(L, index, 1))
             {
-                return std::string("{\"type\":\"jfunction\",\"value\":") + jsfuncIt->second + "}";
+                jsref_ud* ud = (jsref_ud*)lua_touserdatatagged(L, -1, UTAG_JSFUNC);
+                lua_pop(L, 1);
+                if (ud)
+                {
+                    return std::string("{\"type\":\"jfunction\",\"value\":") + ud->ref + "}";
+                }
             }
         }
 
@@ -1932,7 +1944,6 @@ void pushValueToLua(lua_State* L, const char* type, const char* value, const cha
         ud->ref = strdup(value);
         lua_pushcclosurek(L, jsfunc_wrapper, key ? strdup(key) : "", 1, NULL);
 
-        jsfuncClosureMap[lua_topointer(L, -1)] = std::string(value);
         storeCachedJsWrapper(L, ref);
     }
     else
@@ -2152,9 +2163,11 @@ extern "C" void luaUnref(lua_State* L, int ref)
     const void* ptr = lua_topointer(L, -1);
     lua_pop(L, 1);
 
-    if (ptr)
+    JsState* js = jsState(L);
+    auto it = ptr ? js->refs.find(ptr) : js->refs.end();
+    if (it != js->refs.end() && it->second == ref)
     {
-        refCache.erase(ptr);
+        js->refs.erase(it);
     }
 
     lua_unref(L, ref);
@@ -2339,6 +2352,7 @@ extern "C" lua_State* makeLuaState(int envId)
 
     // create new state
     lua_State* L = luaL_newstate();
+    lua_callbacks(L)->userdata = new JsState();
 
     // setup state
     setupState(L);
@@ -2434,6 +2448,8 @@ extern "C" int luauLoad(lua_State* L, int sourceIdx, int chunkNameIdx)
 
 extern "C" void luauClose(lua_State* L)
 {
+    delete jsState(L);
+    lua_callbacks(L)->userdata = nullptr;
     lua_close(L);
 }
 
